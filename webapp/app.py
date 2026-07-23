@@ -29,6 +29,7 @@ from lib.translate import to_korean
 from lib.glossary import render_glossary
 from lib.journal import append_entry, load_journal
 from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
+from lib.charts import render_price_chart_figure, PERIOD_OPTIONS
 
 st.set_page_config(page_title="Devil's Advocate — 스윙 트레이딩 의사결정 보조", layout="wide")
 
@@ -61,6 +62,14 @@ steps_label = ["1.티커/의도", "2.반대관점", "3.지지관점", "4.Conflic
 st.progress((st.session_state.step - 1) / 7, text=f"진행 단계: {steps_label[st.session_state.step - 1]}")
 
 if st.session_state.step >= 2:
+    with st.expander(f"📈 {st.session_state.ticker} 최근 주가 차트", expanded=True):
+        period_label = st.radio(
+            "기간", list(PERIOD_OPTIONS.keys()), index=2, horizontal=True, key="chart_period",
+        )
+        st.caption("가격·이동평균·거래량만 보여줍니다 — 매수/매도 신호를 표시하지 않습니다.")
+        fig = render_price_chart_figure(st.session_state.df, PERIOD_OPTIONS[period_label])
+        st.plotly_chart(fig, use_container_width=True)
+
     with st.sidebar:
         st.caption(f"📊 {st.session_state.ticker} 상세 데이터는 아래 페이지에서 각각 볼 수 있습니다.")
         st.page_link("pages/1_섹터_Peer_비교.py", label="섹터 Peer 비교", icon="📊")
@@ -78,9 +87,12 @@ if st.session_state.step == 1:
         "티커 또는 기업명 (한글/영문 모두 가능, 예: USAR, Nvidia, 엔비디아)",
         value=st.session_state.get("ticker", ""),
     )
-    intent = st.radio("포지션 의도", ["매수 검토", "매도 검토"], horizontal=True)
+    intent = st.radio("포지션 의도", ["매수 검토", "매도 검토"], index=None, horizontal=True)
 
     if st.button("분석 시작 →", type="primary"):
+        if not intent:
+            st.error("포지션 의도(매수 검토/매도 검토)를 선택해주세요.")
+            st.stop()
         with st.spinner(f"'{raw_input}' 티커 확인 중..."):
             ticker, matched_name = resolve_ticker(raw_input)
         if not ticker:
@@ -130,6 +142,11 @@ if st.session_state.step == 1:
             except Exception as e:
                 st.error(f"데이터 수집 중 오류: {e}")
                 st.stop()
+
+        # 새 종목 분석 시작 — 이전 종목의 메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
+        st.session_state.pop("memo", None)
+        st.session_state.pop("stop", None)
+        st.session_state.pop("take_profit", None)
 
         st.session_state.update(
             ticker=ticker, intent=intent,
