@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -14,11 +15,55 @@ require_analysis()
 
 ticker = st.session_state.ticker
 st.title(f"🏛️ {ticker} — 소유구조")
-st.caption("병치만 하고 점수화하지 않습니다 (원칙 B) — 의사결정 흐름과 분리된 참고용 큰 화면 뷰입니다.")
 st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
 st.divider()
 
 own = st.session_state.ownership
+fund_ap_preview = st.session_state.fund_ap
+insider_tx_preview = st.session_state.insider_tx
+direction_preview = insider_trade_direction(insider_tx_preview)
+
+summary_rows = []
+if own["institutions_pct"] is not None:
+    summary_rows.append({
+        "지표": "기관 보유율", "값": f"{own['institutions_pct']*100:.1f}%",
+        "의미": institution_pct_interpretation(own["institutions_pct"]),
+    })
+if own["insiders_pct"] is not None:
+    summary_rows.append({
+        "지표": "내부자 보유율", "값": f"{own['insiders_pct']*100:.1f}%",
+        "의미": "임원 등 내부자가 직접 보유한 비율 — 높을수록 경영진 이해관계가 주가와 일치",
+    })
+if own["short_pct_float"] is not None:
+    summary_rows.append({
+        "지표": "공매도 비율", "값": f"{own['short_pct_float']*100:.1f}%",
+        "의미": "높을수록 하락 베팅 비중이 크다는 뜻이지만, 반대로 숏스퀴즈(급반등) 가능성도 있음",
+    })
+if own["float_ratio"] is not None:
+    summary_rows.append({
+        "지표": "유동주식비율", "값": f"{own['float_ratio']*100:.1f}%",
+        "의미": float_ratio_interpretation(own["float_ratio"]),
+    })
+if fund_ap_preview:
+    total = fund_ap_preview["passive_pct"] + fund_ap_preview["active_pct"]
+    if total > 0:
+        summary_rows.append({
+            "지표": "펀드 Passive:Active",
+            "값": f"{fund_ap_preview['passive_pct']/total*100:.0f}% : {fund_ap_preview['active_pct']/total*100:.0f}%",
+            "의미": "패시브 비중이 높을수록 지수 편입/이탈에 따른 기계적 매매가 많고, 펀더멘털과 무관한 수급 영향이 큼",
+        })
+if direction_preview:
+    summary_rows.append({
+        "지표": "내부자 매매 방향성", "값": direction_preview["direction"],
+        "의미": "단순 보유율(%)보다 최근 실제 매수/매도 방향이 더 중요한 신호일 때가 많음",
+    })
+
+if summary_rows:
+    with st.expander("📋 소유구조 종합 요약표", expanded=True):
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+        st.caption("⚠️ 각 지표를 병치한 표일 뿐, 하나의 점수로 합산한 것이 아닙니다.")
+    st.divider()
+
 if own["institutions_pct"] is not None:
     st.write(f"기관 보유율: **{own['institutions_pct']*100:.1f}%**")
     st.caption(institution_pct_interpretation(own["institutions_pct"]))

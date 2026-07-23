@@ -14,7 +14,6 @@ require_analysis()
 
 ticker = st.session_state.ticker
 st.title(f"📈 {ticker} — 최근 주가 차트")
-st.caption("가격·이동평균·거래량만 병치해서 보여줍니다 — 매수/매도 신호를 표시하지 않습니다 (원칙 B).")
 st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
 st.divider()
 

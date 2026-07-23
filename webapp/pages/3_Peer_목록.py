@@ -14,7 +14,6 @@ require_analysis()
 
 ticker = st.session_state.ticker
 st.title(f"📋 {ticker} — Peer 목록")
-st.caption("병치만 하고 점수화하지 않습니다 (원칙 B) — 의사결정 흐름과 분리된 참고용 큰 화면 뷰입니다.")
 st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
 st.divider()
 

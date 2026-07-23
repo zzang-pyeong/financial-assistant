@@ -33,7 +33,7 @@ from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
 st.set_page_config(page_title="Devil's Advocate — 스윙 트레이딩 의사결정 보조", layout="wide")
 
 if "step" not in st.session_state:
-    st.session_state.step = 1
+    st.session_state.step = "search"
 
 
 def goto(step):
@@ -44,7 +44,7 @@ def goto(step):
 def reset():
     for k in list(st.session_state.keys()):
         del st.session_state[k]
-    st.session_state.step = 1
+    st.session_state.step = "search"
     st.rerun()
 
 
@@ -117,7 +117,7 @@ def compute_flagged_context():
 
 
 def render_neutral_context():
-    """방향과 무관하게 항상 참고할 이벤트/유동성 정보 (실적일 임박, 저유동주식) — Step2에서 한 번만 표시."""
+    """방향과 무관하게 항상 참고할 이벤트/유동성 정보 (실적일 임박, 저유동주식)."""
     earnings_date = st.session_state.earnings_date
     if earnings_date:
         days_left = int(np.busday_count(date.today(), earnings_date))
@@ -131,13 +131,62 @@ def render_neutral_context():
         evidence(f"💧 저유동주식 — 유동주식비율 {ownership['float_ratio']*100:.1f}% (방향과 무관하게 변동성 왜곡 위험)")
 
 
+def collect_bull_bear_lines():
+    """기술적/이벤트·유동성/밸류에이션/정성적 근거를 매수 관점·매도 관점으로 나눠서 반환.
+    포지션 의도와 무관하게 항상 같은 내용 — '비교 보기'와 Conflict Board가 함께 쓴다."""
+    signals = st.session_state.signals
+    tech_bull = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bullish"]
+    tech_bear = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bearish"]
+
+    analyst_trend = st.session_state.analyst_trend
+    qual_bull, qual_bear = [], []
+    if analyst_trend and analyst_trend["lean"] != "neutral":
+        line = (f"애널리스트 의견({analyst_trend['period']}): 매수 "
+                f"{analyst_trend['strongBuy']+analyst_trend['buy']} / 매도 "
+                f"{analyst_trend['strongSell']+analyst_trend['sell']}")
+        (qual_bull if analyst_trend["lean"] == "bullish" else qual_bear).append(line)
+
+    for n in st.session_state.news_classified:
+        date_str = news_date_str(n)
+        date_part = f" ({date_str})" if date_str else ""
+        line = f"뉴스: {news_headline_link(n)}{date_part}"
+        if n["lean"] == "bullish":
+            qual_bull.append(line)
+        elif n["lean"] == "bearish":
+            qual_bear.append(line)
+
+    context_items = compute_flagged_context()
+    risk_bull = [msg for msg, tag, cat in context_items if cat == "risk" and tag == "bullish"]
+    risk_bear = [msg for msg, tag, cat in context_items if cat == "risk" and tag == "bearish"]
+    val_bull = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == "bullish"]
+    val_bear = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == "bearish"]
+
+    return {
+        "bullish": {"기술적 근거": tech_bull, "이벤트·유동성": risk_bull, "밸류에이션": val_bull, "정성적 근거": qual_bull},
+        "bearish": {"기술적 근거": tech_bear, "이벤트·유동성": risk_bear, "밸류에이션": val_bear, "정성적 근거": qual_bear},
+    }
+
+
+def render_side(title, groups):
+    st.subheader(title)
+    for group_name, lines in groups.items():
+        st.markdown(f"**{group_name}**")
+        if lines:
+            for line in lines:
+                st.markdown(f"- {line}")
+        else:
+            st.caption("없음")
+
+
 st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
-st.caption("이 도구는 매매 신호를 대신 결정해주지 않습니다. 투자 조언이 아니며, 참고용 계산 보조 도구입니다.")
+st.caption("나스닥 종목의 매수/매도 관점을 한 번에 비교해서 보여주는 도구입니다. 투자 조언이 아니며, 참고용입니다.")
 
-steps_label = ["1.티커/의도", "2.반대관점", "3.지지관점", "4.Conflict", "5.손절/익절", "6.결정메모", "7.최종확인", "8.기록완료"]
-st.progress((st.session_state.step - 1) / 7, text=f"진행 단계: {steps_label[st.session_state.step - 1]}")
+if isinstance(st.session_state.step, int):
+    guided_labels = ["반대관점", "지지관점", "Conflict", "손절/익절", "결정메모", "최종확인", "기록완료"]
+    idx = st.session_state.step - 2
+    st.progress(idx / 6, text=f"정밀 검토 {idx + 1}/7 — {guided_labels[idx]}")
 
-if st.session_state.step >= 2:
+if "ticker" in st.session_state:
     with st.sidebar:
         st.caption(f"📊 {st.session_state.ticker} 상세 데이터는 아래 페이지에서 각각 볼 수 있습니다.")
         st.page_link("pages/1_차트.py", label="차트", icon="📈")
@@ -149,20 +198,17 @@ if st.session_state.step >= 2:
         st.page_link("pages/7_옵션_데이터.py", label="옵션 데이터", icon="🧮")
 
 # ----------------------------------------------------------------------------
-# STEP 1: 티커 입력 + 의도 선언
+# SEARCH: 티커 검색 — 포지션 선택 없이 바로 비교 화면으로
 # ----------------------------------------------------------------------------
-if st.session_state.step == 1:
-    st.header("1. 티커 입력 & 포지션 선택")
+if st.session_state.step == "search":
+    st.header("🔍 티커 검색")
+    st.caption("티커나 기업명을 입력하면 매수 관점 vs 매도 관점 비교, 차트, 뉴스, 재무 데이터를 바로 볼 수 있습니다.")
     raw_input = st.text_input(
         "티커 또는 기업명 (한글/영문 모두 가능, 예: USAR, Nvidia, 엔비디아)",
         value=st.session_state.get("ticker", ""),
     )
-    intent = st.radio("포지션", ["매수 검토", "매도 검토"], index=None, horizontal=True)
 
-    if st.button("분석 시작 →", type="primary"):
-        if not intent:
-            st.error("포지션(매수 검토/매도 검토)을 선택해주세요.")
-            st.stop()
+    if st.button("검색 →", type="primary"):
         with st.spinner(f"'{raw_input}' 티커 확인 중..."):
             ticker, matched_name = resolve_ticker(raw_input)
         if not ticker:
@@ -213,14 +259,15 @@ if st.session_state.step == 1:
                 st.error(f"데이터 수집 중 오류: {e}")
                 st.stop()
 
-        # 새 종목 분석 시작 — 이전 종목의 메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
+        # 새 종목 검색 — 이전 종목의 포지션 의도·메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
+        st.session_state.pop("intent", None)
         st.session_state.pop("memo", None)
         st.session_state.pop("stop", None)
         st.session_state.pop("take_profit", None)
         st.session_state.pop("entry_price", None)
 
         st.session_state.update(
-            ticker=ticker, intent=intent,
+            ticker=ticker,
             df=df, ind=ind, info=info, earnings_date=earnings_date,
             qqq_price=qqq_price, qqq_ma200=qqq_ma200, regime_favorable=regime_favorable,
             peer_data=peer_data, target_health=target_health, ownership=ownership, fund_ap=fund_ap,
@@ -228,15 +275,66 @@ if st.session_state.step == 1:
             news_classified=news_classified, news_summary=news_summary,
             analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
         )
-        goto(2)
+        goto("compare")
 
 # ----------------------------------------------------------------------------
-# STEP 2: 반대 관점 강제 노출 (원칙 A)
+# COMPARE: 매수 관점 vs 매도 관점 비교 (핵심 기능 — 포지션 선택 없이 바로 확인)
+# ----------------------------------------------------------------------------
+elif st.session_state.step == "compare":
+    ticker = st.session_state.ticker
+    st.header(f"{ticker} — 매수 관점 vs 매도 관점")
+    st.caption("점수를 하나로 합치지 않고, 기술적/이벤트·유동성/밸류에이션/정성적 근거를 매수 관점과 매도 관점으로 나눠 병치합니다.")
+    render_glossary(["RSI", "MACD", "이동평균(MA)", "볼린저밴드", "ATR"], title="ℹ️ 기술적 지표 설명")
+
+    st.subheader("📋 공통 참고 사항")
+    render_neutral_context()
+
+    lines = collect_bull_bear_lines()
+    col1, col2 = st.columns(2)
+    with col1:
+        render_side("🔵 매수 관점", lines["bullish"])
+    with col2:
+        render_side("🟠 매도 관점", lines["bearish"])
+
+    news_summary = st.session_state.news_summary
+    st.caption(
+        f"뉴스 톤 요약 (최근 {NEWS_LOOKBACK_DAYS}일, 총 {news_summary['total']}건): "
+        f"긍정 {news_summary['bullish']} / 부정 {news_summary['bearish']} / 중립 {news_summary['neutral']}"
+    )
+    st.caption("📊 상세 데이터(차트·재무·소유구조·뉴스·옵션)는 왼쪽 사이드바에서 바로 확인할 수 있습니다.")
+
+    st.divider()
+    st.subheader("더 신중하게 결정하고 싶다면")
+    st.caption("반대 관점을 먼저 강제로 확인하고, 손절/익절 기준까지 잡아 매매일지에 남기는 단계별 정밀 검토 흐름입니다.")
+    if st.button("🔍 정밀 검토 시작 (반대 관점부터 단계별로)", type="primary"):
+        goto("intent")
+
+# ----------------------------------------------------------------------------
+# INTENT: 정밀 검토를 위한 포지션 선택
+# ----------------------------------------------------------------------------
+elif st.session_state.step == "intent":
+    st.header(f"{st.session_state.ticker} — 포지션 선택")
+    st.caption("정밀 검토는 당신이 고른 포지션의 반대 관점을 먼저 강제로 보여준 뒤 단계별로 진행됩니다.")
+    intent = st.radio("포지션", ["매수 검토", "매도 검토"], index=None, horizontal=True)
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("← 비교 화면으로"):
+            goto("compare")
+    with col2:
+        if st.button("다음: 반대 관점 확인 →", type="primary"):
+            if not intent:
+                st.error("포지션(매수 검토/매도 검토)을 선택해주세요.")
+                st.stop()
+            st.session_state.intent = intent
+            goto(2)
+
+# ----------------------------------------------------------------------------
+# STEP 2: 반대 관점 강제 노출
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 2:
     intent = st.session_state.intent
     opposite_tag = "bearish" if intent == "매수 검토" else "bullish"
-    st.header(f"2. ⚠️ 반대 관점부터 확인하세요 ({intent}에 대한 회의적 근거)")
+    st.header(f"1. ⚠️ 반대 관점부터 확인하세요 ({intent}에 대한 회의적 근거)")
     st.warning("이 단계를 건너뛸 수 없습니다. 아래 근거를 먼저 확인해야 다음 단계로 진행됩니다.")
     st.caption("색상으로 유불리를 표시하지 않습니다 — 아래는 모두 당신의 의도(위 제목)와 반대되는 근거입니다.")
     render_glossary(["RSI", "MACD", "이동평균(MA)", "볼린저밴드", "ATR"], title="ℹ️ 기술적 지표 설명")
@@ -290,8 +388,8 @@ elif st.session_state.step == 2:
     confirmed = st.checkbox("위 반대 관점 근거를 확인했습니다.")
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← 처음으로"):
-            goto(1)
+        if st.button("← 비교 화면으로"):
+            goto("compare")
     with col2:
         if st.button("다음: 지지 관점 확인 →", type="primary", disabled=not confirmed):
             goto(3)
@@ -302,7 +400,7 @@ elif st.session_state.step == 2:
 elif st.session_state.step == 3:
     intent = st.session_state.intent
     same_tag = "bullish" if intent == "매수 검토" else "bearish"
-    st.header(f"3. {intent}를 지지하는 근거")
+    st.header(f"2. {intent}를 지지하는 근거")
     st.caption("색상으로 유불리를 표시하지 않습니다 — 아래는 모두 당신의 의도를 지지하는 근거입니다.")
 
     st.subheader("🔧 기술적 근거")
@@ -373,55 +471,20 @@ elif st.session_state.step == 3:
 # STEP 4: Conflict Board
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 4:
-    st.header("4. Conflict Board — 관점이 충돌하는 지점")
-    st.caption("점수를 합산하지 않습니다. 서로 다른 카테고리가 다른 방향을 가리키는 지점만 나열합니다.")
+    st.header("3. Conflict Board — 관점이 충돌하는 지점")
+    st.caption("점수를 합산하지 않습니다. 매수 관점과 매도 관점을 나눠서 병치합니다.")
 
-    signals = st.session_state.signals
-    tech_bullish = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bullish"]
-    tech_bearish = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bearish"]
-
-    analyst_trend = st.session_state.analyst_trend
-    qual_bullish, qual_bearish = [], []
-    if analyst_trend and analyst_trend["lean"] != "neutral":
-        line = (f"애널리스트 의견({analyst_trend['period']}): 매수 "
-                f"{analyst_trend['strongBuy']+analyst_trend['buy']} / 매도 "
-                f"{analyst_trend['strongSell']+analyst_trend['sell']}")
-        (qual_bullish if analyst_trend["lean"] == "bullish" else qual_bearish).append(line)
-
-    for n in st.session_state.news_classified:
-        date_str = news_date_str(n)
-        date_part = f" ({date_str})" if date_str else ""
-        line = f"뉴스: {news_headline_link(n)}{date_part}"
-        if n["lean"] == "bullish":
-            qual_bullish.append(line)
-        elif n["lean"] == "bearish":
-            qual_bearish.append(line)
-
-    def render_column(tech_lines, qual_lines):
-        st.markdown("**기술적 근거**")
-        if tech_lines:
-            for line in tech_lines:
-                st.markdown(f"- {line}")
-        else:
-            st.caption("없음")
-        st.markdown("**정성적 근거**")
-        if qual_lines:
-            for line in qual_lines:
-                st.markdown(f"- {line}")
-        else:
-            st.caption("없음")
-
+    lines = collect_bull_bear_lines()
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("🟢 긍정 방향")
-        render_column(tech_bullish, qual_bullish)
+        render_side("🔵 매수 관점", lines["bullish"])
     with col2:
-        st.subheader("🔴 회의적 방향")
-        render_column(tech_bearish, qual_bearish)
+        render_side("🟠 매도 관점", lines["bearish"])
 
-    if (tech_bullish or qual_bullish) and (tech_bearish or qual_bearish):
-        st.warning("⚠️ 기술적·정성적 근거 내에서도 방향이 엇갈립니다 — 아래 손절/익절에서 보수적으로 접근하는 것을 권장합니다.")
-    st.caption("점수를 합산하지 않고 기술적/정성적 근거를 나눠서 병치합니다 (원칙 B).")
+    has_bull = any(lines["bullish"].values())
+    has_bear = any(lines["bearish"].values())
+    if has_bull and has_bear:
+        st.warning("⚠️ 매수 관점과 매도 관점의 근거가 둘 다 있습니다 — 아래 손절/익절에서 보수적으로 접근하는 것을 권장합니다.")
 
     col1, col2 = st.columns([1, 5])
     with col1:
@@ -435,7 +498,7 @@ elif st.session_state.step == 4:
 # STEP 5: 자동 산출 + 확인 강제 (손절/익절)
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 5:
-    st.header("5. 손절가 / 익절가 (기술적 지표 반영)")
+    st.header("4. 손절가 / 익절가 (기술적 지표 반영)")
 
     ind = st.session_state.ind
     info = st.session_state.info
@@ -492,7 +555,7 @@ elif st.session_state.step == 5:
 # STEP 6: 결정 이유 메모 (선택)
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 6:
-    st.header("6. 이 결정을 내린 이유")
+    st.header("5. 이 결정을 내린 이유")
     memo = st.text_area(
         "왜 지금 이 포지션을 검토하고 있나요? (선택 입력)",
         value=st.session_state.get("memo", ""), height=120,
@@ -510,7 +573,7 @@ elif st.session_state.step == 6:
 # STEP 7: 최종 확인
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 7:
-    st.header("7. 최종 확인")
+    st.header("6. 최종 확인")
     st.write(f"**티커:** {st.session_state.ticker}  |  **의도:** {st.session_state.intent}")
     c1, c2 = st.columns(2)
     c1.metric("손절가", f"${st.session_state.stop:.2f}")
@@ -538,7 +601,7 @@ elif st.session_state.step == 7:
 # STEP 8: 완료 + 매매일지
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 8:
-    st.header("8. ✅ 매매일지에 기록되었습니다")
+    st.header("7. ✅ 매매일지에 기록되었습니다")
     st.caption("실제 주문은 브로커에서 직접 실행하세요. 이 도구는 자동매매를 하지 않습니다.")
     st.dataframe(load_journal(), use_container_width=True)
     if st.button("새 종목 분석하기"):

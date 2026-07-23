@@ -7,14 +7,14 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.translate import to_korean
 from lib.config import ANALYST_NEWS_LOOKBACK_DAYS
-from lib.page_helpers import require_analysis
+from lib.page_helpers import require_analysis, news_date_str
 
 st.set_page_config(page_title="기업 이벤트 뉴스 — Devil's Advocate", layout="wide")
 require_analysis()
 
 ticker = st.session_state.ticker
 st.title(f"🏢 {ticker} — 주요 기업 이벤트 뉴스")
-st.caption("M&A · 경영진 교체 · 신규 계약/파트너십 — 병치만 하고 점수화하지 않습니다 (원칙 B).")
+st.caption("M&A · 경영진 교체 · 신규 계약/파트너십")
 st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
 st.divider()
 
@@ -28,7 +28,9 @@ if corporate_events:
         cats = ", ".join(f"{c['category']}({', '.join(c['matched'])})" for c in ev["categories"])
         headline = to_korean(ev["headline"])
         title = f"[{headline}]({ev['url']})" if ev.get("url") else headline
-        st.write(f"- {title}")
+        date_str = news_date_str(ev)
+        date_part = f" ({date_str})" if date_str else ""
+        st.write(f"- {title}{date_part}")
         st.caption(f"분류: {cats} · _({ev['source']})_")
 else:
     st.caption("해당 기간 내 M&A·경영진 교체·신규 계약 관련 뉴스 없음")
