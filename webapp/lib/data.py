@@ -38,11 +38,18 @@ def get_price_history(ticker, start="2024-01-01"):
 def get_intraday_price_history(ticker, interval, period):
     """분봉 데이터 — Yahoo Finance 제약상 interval별로 조회 가능한 최대 period가 다름
     (1m: 최근 7일, 5m/15m/30m: 최근 60일, 60m: 최근 2년 등). 5분 캐시로 너무 잦은
-    재호출은 막되, 장중 갱신을 위해 일봉보다 짧게 잡음."""
+    재호출은 막되, 장중 갱신을 위해 일봉보다 짧게 잡음.
+
+    yfinance는 인덱스를 거래소 현지시간(미국 동부, America/New_York)으로 반환한다.
+    사용자는 한국에서 보므로 화면에 보이는 시각과 실제 미국 장중 시각이 어긋나
+    보이지 않도록 한국시간(KST)으로 변환해서 반환한다."""
     try:
         df = yf.Ticker(ticker).history(period=period, interval=interval)
         if df is None or df.empty:
             return None
+        if df.index.tz is not None:
+            df = df.copy()
+            df.index = df.index.tz_convert("Asia/Seoul")
         return df
     except Exception:
         return None

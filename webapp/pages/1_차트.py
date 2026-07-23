@@ -42,6 +42,7 @@ with chart_col:
         if intraday_df is None or intraday_df.empty:
             st.error(f"{intraday_choice}봉 데이터를 가져오지 못했습니다 (Yahoo 제공 범위를 벗어났을 수 있습니다).")
         else:
+            st.caption("🕐 시간은 한국시간(KST) 기준입니다 (미국 정규장은 한국시간 밤 22:30~05:00 무렵).")
             st.caption(f"MA20/MA60은 {intraday_choice} 봉 기준 20개/60개 이동평균입니다 (일봉 MA와 단위가 다릅니다).")
             fig = render_price_chart_figure(intraday_df, period_days=None)
             st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
