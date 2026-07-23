@@ -6,8 +6,7 @@ import pandas as pd
 JOURNAL_PATH = Path(__file__).parent.parent / "trade_journal.csv"
 
 FIELDS = [
-    "timestamp", "ticker", "intent", "entry_price", "stop", "take_profit",
-    "position_size", "position_multiplier", "memo",
+    "timestamp", "ticker", "intent", "entry_price", "stop", "take_profit", "memo",
 ]
 
 

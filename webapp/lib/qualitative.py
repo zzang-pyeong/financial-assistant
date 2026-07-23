@@ -79,6 +79,46 @@ def filter_analyst_related_news(news_list):
     return results
 
 
+CORPORATE_EVENT_KEYWORDS = {
+    "인수합병(M&A)": [
+        "acquisition", "acquires", "acquired", "to acquire", "merger", "to merge",
+        "buyout", "takeover", "divest",
+    ],
+    "경영진 교체": [
+        "chief executive", " ceo ", "steps down", "resigns", "resignation",
+        "appoints", "names new", "new ceo", "cfo", "chief financial officer",
+        "succeeds", "interim ceo",
+    ],
+    "신규 계약/파트너십": [
+        "partnership", "strategic partnership", "signs deal", "signs agreement",
+        "awarded", "wins contract", "contract win", "collaborat", "joint venture",
+        "supply agreement", "licensing deal",
+    ],
+}
+
+
+def filter_corporate_event_news(news_list):
+    """M&A·경영진 교체·신규 계약/파트너십처럼 굵직한 기업 이벤트 뉴스만 근사 필터링.
+    ⚠️ 키워드 매칭 기반 근사치 — 정밀 이벤트 추출이 아님."""
+    results = []
+    for n in news_list:
+        headline = (n.get("headline") or "").lower()
+        matched_categories = []
+        for category, kws in CORPORATE_EVENT_KEYWORDS.items():
+            hits = [kw.strip() for kw in kws if kw in headline]
+            if hits:
+                matched_categories.append({"category": category, "matched": hits})
+        if matched_categories:
+            results.append({
+                "headline": n.get("headline"),
+                "source": n.get("source"),
+                "datetime": n.get("datetime"),
+                "url": n.get("url"),
+                "categories": matched_categories,
+            })
+    return results
+
+
 def classify_analyst_trend(rec_trends):
     """Finnhub recommendation trends의 최신 기간 집계 → bullish/bearish/neutral"""
     if not rec_trends:

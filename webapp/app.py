@@ -9,33 +9,26 @@ sys.path.append(str(Path(__file__).parent))
 
 from lib.data import (
     get_price_history, get_yf_info, get_yf_calendar, get_finnhub_recommendation_trends,
-    get_finnhub_company_news,
+    get_finnhub_company_news, resolve_ticker,
 )
 from lib.indicators import compute_indicators, classify_indicator_signals
-from lib.risk import compute_stop_take_profit, compute_position_size
+from lib.risk import compute_stop_take_profit
 from lib.peers import (
-    classify_peers, tier1_stats, get_financial_health, runway_interpretation,
-    quick_ratio_interpretation, roe_interpretation, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK,
+    classify_peers, tier1_stats, get_financial_health,
+    RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK,
 )
 from lib.ownership import (
     get_ownership_summary, get_fund_level_active_passive, get_firm_level_holders,
-    get_recent_insider_transactions, insider_trade_direction,
-    float_ratio_interpretation, institution_pct_interpretation,
+    get_recent_insider_transactions,
 )
 from lib.qualitative import (
-    classify_news_tone, news_tone_summary, classify_analyst_trend, filter_analyst_related_news,
+    classify_news_tone, news_tone_summary, classify_analyst_trend,
+    filter_analyst_related_news, filter_corporate_event_news,
 )
 from lib.translate import to_korean
 from lib.glossary import render_glossary
 from lib.journal import append_entry, load_journal
-
-NEWS_LOOKBACK_DAYS = 5  # PRD 6.1 "최근 N일 뉴스 톤 변화 추이"
-ANALYST_NEWS_LOOKBACK_DAYS = 60  # 애널리스트 관련 언급은 더 넓은 기간에서 탐색
-
-# 계좌자본·리스크허용비율은 사용자에게 강제로 물어보지 않는다 — 이 도구의 목적은
-# 개인 자금관리가 아니라 객관적 매매 정보 제공이라, 예시 계산용 기본값만 가정한다.
-DEFAULT_ACCOUNT = 10000
-DEFAULT_RISK_PCT = 0.01
+from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
 
 st.set_page_config(page_title="Devil's Advocate — 스윙 트레이딩 의사결정 보조", layout="wide")
 
@@ -58,134 +51,39 @@ def reset():
 st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
 st.caption("이 도구는 매매 신호를 대신 결정해주지 않습니다. 투자 조언이 아니며, 참고용 계산 보조 도구입니다.")
 
-steps_label = ["1.티커/의도", "2.반대관점", "3.지지관점", "4.Conflict", "5.손절/익절/수량", "6.결정메모", "7.최종확인", "8.기록완료"]
+steps_label = ["1.티커/의도", "2.반대관점", "3.지지관점", "4.Conflict", "5.손절/익절", "6.결정메모", "7.최종확인", "8.기록완료"]
 st.progress((st.session_state.step - 1) / 7, text=f"진행 단계: {steps_label[st.session_state.step - 1]}")
 
-
-def render_sidebar_details():
-    """Peer 비교 / 소유구조 상세 — 병치만 하고 점수화하지 않음 (원칙 B)"""
-    if st.session_state.step < 2:
-        return
+if st.session_state.step >= 2:
     with st.sidebar:
-        st.header(f"📊 {st.session_state.ticker} 상세 데이터")
-
-        st.subheader("섹터 Peer 비교")
-        peer_data = st.session_state.peer_data
-        fwd_pe = st.session_state.info.get("forwardPE")
-        st.write(f"대상 종목 Forward PE: **{fwd_pe:.1f}**" if isinstance(fwd_pe, (int, float)) else "Forward PE: N/A")
-        if peer_data["dict_name"]:
-            st.caption(f"자동 판별된 섹터 키워드 그룹: {peer_data['dict_name']} ({', '.join(peer_data['target_matches'])})")
-        else:
-            st.caption("자동 판별된 니치 섹터 키워드 없음 — 전체 peer가 Tier2로 표시됨")
-
-        stats = tier1_stats(peer_data["peers"])
-        if stats:
-            label = "평균" if stats["reliable"] else f"평균(n={stats['n']}, 표본 부족)"
-            st.write(f"Tier1(진짜 동종) {label}: **{stats['mean']:.1f}** (중앙값 {stats['median']:.1f}, n={stats['n']})")
-            if isinstance(fwd_pe, (int, float)) and fwd_pe > 0:
-                st.write(f"→ 대상 종목은 Tier1 평균의 **{fwd_pe/stats['mean']:.1f}배**")
-        else:
-            st.caption("Tier1 유효 forward PE 표본 없음")
-
-        st.caption(
-            "⚠️ PER은 적자 섹터에서 무력화됨(실증 확인) — EV/Revenue·유동성·런웨이를 함께 참고하세요"
-        )
-
-        target_health = st.session_state.target_health
-        with st.expander(f"{st.session_state.ticker} 재무 건전성 (Peer 비교 보완)", expanded=True):
-            ev_str = f"{target_health['ev_revenue']:.1f}" if isinstance(target_health['ev_revenue'], (int, float)) else "N/A"
-            st.write(f"EV/Revenue: **{ev_str}**  ·  당좌비율: **{target_health['quick_ratio']:.2f}**" if isinstance(target_health['quick_ratio'], (int, float)) else f"EV/Revenue: **{ev_str}**")
-            st.write(f"현금 런웨이: **{runway_interpretation(target_health)}**")
-            if isinstance(target_health['quick_ratio'], (int, float)):
-                st.caption(f"당좌비율 판정: {quick_ratio_interpretation(target_health['quick_ratio'])}")
-            pbr_str = f"{target_health['pbr']:.2f}" if isinstance(target_health['pbr'], (int, float)) else "N/A"
-            de_str = f"{target_health['debt_to_equity']:.1f}" if isinstance(target_health['debt_to_equity'], (int, float)) else "N/A"
-            st.write(f"PBR: **{pbr_str}**  ·  부채비율(D/E): **{de_str}**")
-            st.write(f"ROE: **{roe_interpretation(target_health['roe'], target_health['debt_to_equity'])}**")
-        render_glossary(
-            ["Forward PER", "PBR", "ROE", "EV/Revenue", "유동비율·당좌비율", "부채비율(D/E)", "현금 런웨이"],
-            title="ℹ️ 펀더멘털 지표 설명",
-        )
-
-        for p in sorted(peer_data["peers"], key=lambda x: x["tier"]):
-            tier_str = "🟢Tier1" if p["tier"] == 1 else "⚪Tier2"
-            pe_str = f"{p['forwardPE']:.1f}" if isinstance(p["forwardPE"], (int, float)) else "N/A"
-            h = p["health"]
-            ev_str = f"{h['ev_revenue']:.1f}" if isinstance(h['ev_revenue'], (int, float)) else "·"
-            qr_str = f"{h['quick_ratio']:.2f}" if isinstance(h['quick_ratio'], (int, float)) else "·"
-            runway_str = "흑자" if h["fcf_positive"] else (f"{h['runway_months']:.0f}개월" if h["runway_months"] is not None else "·")
-            st.caption(f"{tier_str} {p['ticker']} ({p['name']}) — FwdPE {pe_str} · EV/Rev {ev_str} · 당좌 {qr_str} · 런웨이 {runway_str}")
-
-        st.subheader("소유구조")
-        own = st.session_state.ownership
-        if own["institutions_pct"] is not None:
-            st.write(f"기관 보유율: **{own['institutions_pct']*100:.1f}%**")
-            st.caption(institution_pct_interpretation(own["institutions_pct"]))
-        if own["insiders_pct"] is not None:
-            st.write(f"내부자 보유율: **{own['insiders_pct']*100:.1f}%**")
-        if own["short_pct_float"] is not None:
-            st.write(f"공매도 비율: **{own['short_pct_float']*100:.1f}%**")
-        if own["float_ratio"] is not None:
-            st.write(f"유동주식비율: **{own['float_ratio']*100:.1f}%**")
-            st.caption(float_ratio_interpretation(own["float_ratio"]))
-
-        fund_ap = st.session_state.fund_ap
-        if fund_ap:
-            total = fund_ap["passive_pct"] + fund_ap["active_pct"]
-            if total > 0:
-                st.write(f"펀드 단위 Passive:Active = **{fund_ap['passive_pct']/total*100:.0f}% : {fund_ap['active_pct']/total*100:.0f}%**")
-                st.caption("(펀드명 키워드 매칭 기준, 참고용)")
-
-        insider_tx = st.session_state.insider_tx
-        direction = insider_trade_direction(insider_tx)
-        if direction:
-            st.write(f"내부자 매매 방향성: **{direction['direction']}**")
-            st.caption(
-                f"매수 {direction['buy_count']}건({direction['buy_shares']:,}주) vs "
-                f"매도 {direction['sell_count']}건({direction['sell_shares']:,}주) "
-                f"— 옵션행사 등 {direction['other_count']}건은 제외"
-            )
-        if insider_tx is not None and not insider_tx.empty:
-            with st.expander("최근 내부자 거래 원본 (주식보상 제외)"):
-                st.caption("⚠️ IPO 당일 배정분은 자발적 매매가 아닐 수 있음 — 날짜·가격을 직접 확인하세요")
-                st.dataframe(insider_tx.head(10), use_container_width=True)
-        render_glossary(
-            ["기관·내부자 보유율", "유동주식비율", "공매도 비율", "내부자 매매 방향성"],
-            title="ℹ️ 소유구조 지표 설명",
-        )
-
-        st.subheader("애널리스트 관련 뉴스 (근사치)")
-        st.caption(
-            f"최근 {ANALYST_NEWS_LOOKBACK_DAYS}일 뉴스 중 'upgrade/price target' 등 키워드가 있는 것만 필터링. "
-            "⚠️ 실제 매수/매도 집계(위 애널리스트 의견 수치)의 확정된 근거는 아니며, 관련 있어 보이는 뉴스일 뿐입니다."
-        )
-        analyst_news = st.session_state.get("analyst_news", [])
-        if analyst_news:
-            for n in analyst_news[:8]:
-                st.write(f"- {to_korean(n['headline'])}")
-                st.caption(f"매칭 키워드: {', '.join(n['matched'])} · [원문]({n['url']})")
-        else:
-            st.caption("해당 기간 내 애널리스트 관련 뉴스 없음")
-
-
-render_sidebar_details()
+        st.caption(f"📊 {st.session_state.ticker} 상세 데이터(Peer·소유구조·뉴스)는 큰 화면에서 볼 수 있습니다.")
+        st.page_link("pages/1_상세_데이터.py", label="상세 데이터 전체보기", icon="📊")
 
 # ----------------------------------------------------------------------------
 # STEP 1: 티커 입력 + 의도 선언
 # ----------------------------------------------------------------------------
 if st.session_state.step == 1:
     st.header("1. 티커 입력 & 포지션 의도 선언")
-    ticker = st.text_input("나스닥 티커", value=st.session_state.get("ticker", "USAR")).upper().strip()
+    raw_input = st.text_input(
+        "티커 또는 기업명 (한글/영문 모두 가능, 예: USAR, Nvidia, 엔비디아)",
+        value=st.session_state.get("ticker", "USAR"),
+    )
     intent = st.radio("포지션 의도", ["매수 검토", "매도 검토"], horizontal=True)
-    account = DEFAULT_ACCOUNT
-    risk_pct = DEFAULT_RISK_PCT
 
     if st.button("분석 시작 →", type="primary"):
+        with st.spinner(f"'{raw_input}' 티커 확인 중..."):
+            ticker, matched_name = resolve_ticker(raw_input)
+        if not ticker:
+            st.error("티커 또는 기업명을 입력해주세요.")
+            st.stop()
+        if matched_name:
+            st.info(f"'{raw_input}' → **{ticker}** ({matched_name})로 해석했습니다.")
+
         with st.spinner(f"{ticker} 데이터 수집 중... (가격, 지표, peer, 소유구조)"):
             try:
                 df = get_price_history(ticker, "2024-01-01")
                 if df is None or df.empty:
-                    st.error("가격 데이터를 가져오지 못했습니다. 티커를 확인해주세요.")
+                    st.error("가격 데이터를 가져오지 못했습니다. 티커/기업명을 확인해주세요.")
                     st.stop()
                 ind = compute_indicators(df)
                 info = get_yf_info(ticker)
@@ -214,22 +112,23 @@ if st.session_state.step == 1:
                 rec_trends = get_finnhub_recommendation_trends(ticker)
                 analyst_trend = classify_analyst_trend(rec_trends)
 
-                # 애널리스트 등급/목표가 "관련 뉴스" — 더 넓은 기간에서 근사 필터링
+                # 애널리스트/기업이벤트 관련 뉴스 — 더 넓은 기간에서 근사 필터링
                 wide_from_str = (date.today() - timedelta(days=ANALYST_NEWS_LOOKBACK_DAYS)).isoformat()
                 wide_news = get_finnhub_company_news(ticker, wide_from_str, today_str)
                 analyst_news = filter_analyst_related_news(wide_news)
+                corporate_events = filter_corporate_event_news(wide_news)
             except Exception as e:
                 st.error(f"데이터 수집 중 오류: {e}")
                 st.stop()
 
         st.session_state.update(
-            ticker=ticker, intent=intent, account=account, risk_pct=risk_pct,
+            ticker=ticker, intent=intent,
             df=df, ind=ind, info=info, earnings_date=earnings_date,
             qqq_price=qqq_price, qqq_ma200=qqq_ma200, regime_favorable=regime_favorable,
             peer_data=peer_data, target_health=target_health, ownership=ownership, fund_ap=fund_ap,
             firm_holders=firm_holders, insider_tx=insider_tx, signals=signals,
             news_classified=news_classified, news_summary=news_summary,
-            analyst_trend=analyst_trend, analyst_news=analyst_news,
+            analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
         )
         goto(2)
 
@@ -409,7 +308,7 @@ elif st.session_state.step == 4:
             st.caption("없음")
 
     if bullish and bearish:
-        st.warning("⚠️ 기술적·정성적 근거 내에서도 방향이 엇갈립니다 — 아래 손절/익절/포지션 사이징에서 보수적으로 접근하는 것을 권장합니다.")
+        st.warning("⚠️ 기술적·정성적 근거 내에서도 방향이 엇갈립니다 — 아래 손절/익절에서 보수적으로 접근하는 것을 권장합니다.")
     st.caption("점수를 합산하지 않고 [기술]/[정성] 태그만 붙여 병치합니다 (원칙 B).")
 
     col1, col2 = st.columns([1, 5])
@@ -417,14 +316,14 @@ elif st.session_state.step == 4:
         if st.button("← 지지 관점 다시 보기"):
             goto(3)
     with col2:
-        if st.button("다음: 손절/익절/포지션 사이징 →", type="primary"):
+        if st.button("다음: 손절/익절 →", type="primary"):
             goto(5)
 
 # ----------------------------------------------------------------------------
-# STEP 5: 자동 산출 + 확인 강제 (손절/익절/포지션 사이징)
+# STEP 5: 자동 산출 + 확인 강제 (손절/익절)
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 5:
-    st.header("5. 손절가 / 익절가 / 포지션 사이징 (자동 산출)")
+    st.header("5. 손절가 / 익절가 (자동 산출)")
 
     ind = st.session_state.ind
     entry = ind["close"]
@@ -449,30 +348,7 @@ elif st.session_state.step == 5:
     with col2:
         tp = st.number_input("보수적 익절가 (50% 물량, $)", value=round(rt["take_profit"], 2), format="%.2f")
     st.caption("나머지 50% 물량은 추격손절(Chandelier Exit)로 트레일링하며 목표가를 미리 정하지 않습니다.")
-
-    st.subheader("포지션 사이징 (참고용 예시)")
-    st.caption(
-        f"계좌 자본·리스크 허용비율은 입력받지 않습니다 — 이 도구는 개인 자금관리가 아니라 "
-        f"객관적 매매 정보 제공이 목적이라, 아래는 계좌 ${DEFAULT_ACCOUNT:,} · 리스크 "
-        f"{DEFAULT_RISK_PCT*100:.0f}% 가정 시의 예시 계산입니다. 실제 매수수량은 직접 정하세요."
-    )
-    earnings_date = st.session_state.earnings_date
-    earnings_days = int(np.busday_count(date.today(), earnings_date)) if earnings_date else None
-    pos = compute_position_size(
-        st.session_state.account, st.session_state.risk_pct, entry, stop,
-        earnings_days=earnings_days, regime_favorable=st.session_state.regime_favorable,
-    )
-    st.write(f"- 리스크 허용 금액(가정): ${pos['risk_amount']:.2f} (계좌 ${st.session_state.account:,} 가정 × {st.session_state.risk_pct*100:.1f}%)")
-    st.write(f"- 손절폭: ${pos['stop_distance']:.2f}")
-    st.write(f"- 기본 매수수량: {pos['base_qty']:.1f}주")
-    for r in pos["reasons"]:
-        if r.startswith("⚠"):
-            st.warning(r)
-        else:
-            st.write(f"- {r}")
-    if pos["capped_by_capital"]:
-        st.caption(f"계좌로 살 수 있는 최대 수량: {pos['max_affordable_qty']:.1f}주 (진입가 기준)")
-    qty = st.number_input("최종 매수수량 (주)", value=round(pos["final_qty"], 1), format="%.1f")
+    st.caption("매수 수량·자금 배분은 이 도구가 다루지 않습니다 — 개인 자금관리는 사용자 몫입니다.")
 
     rationale_confirmed = st.checkbox("위 산출 근거를 확인했습니다.")
     col1, col2 = st.columns([1, 5])
@@ -483,8 +359,6 @@ elif st.session_state.step == 5:
         if st.button("다음: 결정 이유 메모 →", type="primary", disabled=not rationale_confirmed):
             st.session_state.stop = stop
             st.session_state.take_profit = tp
-            st.session_state.qty = qty
-            st.session_state.position_multiplier = pos["multiplier"]
             goto(6)
 
 # ----------------------------------------------------------------------------
@@ -511,10 +385,9 @@ elif st.session_state.step == 6:
 elif st.session_state.step == 7:
     st.header("7. 최종 확인")
     st.write(f"**티커:** {st.session_state.ticker}  |  **의도:** {st.session_state.intent}")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("손절가", f"${st.session_state.stop:.2f}")
     c2.metric("보수적 익절가 (50%)", f"${st.session_state.take_profit:.2f}")
-    c3.metric("매수수량", f"{st.session_state.qty:.1f}주")
     st.write(f"**결정 이유 메모:** {st.session_state.memo}")
     st.info("나머지 50% 물량은 추격손절로 트레일링, 목표가 없음.")
 
@@ -527,8 +400,7 @@ elif st.session_state.step == 7:
             append_entry({
                 "ticker": st.session_state.ticker, "intent": st.session_state.intent,
                 "entry_price": st.session_state.ind["close"], "stop": st.session_state.stop,
-                "take_profit": st.session_state.take_profit, "position_size": st.session_state.qty,
-                "position_multiplier": st.session_state.position_multiplier, "memo": st.session_state.memo,
+                "take_profit": st.session_state.take_profit, "memo": st.session_state.memo,
             })
             goto(8)
     with col3:
