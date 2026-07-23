@@ -48,6 +48,12 @@ def reset():
     st.rerun()
 
 
+def news_headline_link(n):
+    """뉴스 헤드라인을 원문 링크가 있으면 클릭 가능한 마크다운 링크로, 없으면 텍스트 그대로."""
+    headline = to_korean(n["headline"])
+    return f"[{headline}]({n['url']})" if n.get("url") else headline
+
+
 st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
 st.caption("이 도구는 매매 신호를 대신 결정해주지 않습니다. 투자 조언이 아니며, 참고용 계산 보조 도구입니다.")
 
@@ -56,8 +62,12 @@ st.progress((st.session_state.step - 1) / 7, text=f"진행 단계: {steps_label[
 
 if st.session_state.step >= 2:
     with st.sidebar:
-        st.caption(f"📊 {st.session_state.ticker} 상세 데이터(Peer·소유구조·뉴스)는 큰 화면에서 볼 수 있습니다.")
-        st.page_link("pages/1_상세_데이터.py", label="상세 데이터 전체보기", icon="📊")
+        st.caption(f"📊 {st.session_state.ticker} 상세 데이터는 아래 페이지에서 각각 볼 수 있습니다.")
+        st.page_link("pages/1_섹터_Peer_비교.py", label="섹터 Peer 비교", icon="📊")
+        st.page_link("pages/2_Peer_목록.py", label="Peer 목록", icon="📋")
+        st.page_link("pages/3_소유구조.py", label="소유구조", icon="🏛️")
+        st.page_link("pages/4_애널리스트_뉴스.py", label="애널리스트 관련 뉴스", icon="📰")
+        st.page_link("pages/5_기업_이벤트_뉴스.py", label="기업 이벤트 뉴스", icon="🏢")
 
 # ----------------------------------------------------------------------------
 # STEP 1: 티커 입력 + 의도 선언
@@ -196,7 +206,7 @@ elif st.session_state.step == 2:
     opposite_news = [n for n in st.session_state.news_classified if n["lean"] == opposite_tag]
     if opposite_news:
         for n in opposite_news[:5]:
-            st.error(f"📰 {to_korean(n['headline'])} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
+            st.error(f"📰 {news_headline_link(n)} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
     else:
         st.caption(f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 반대 관점 키워드 매칭 없음")
 
@@ -247,7 +257,7 @@ elif st.session_state.step == 3:
     same_news = [n for n in st.session_state.news_classified if n["lean"] == same_tag]
     if same_news:
         for n in same_news[:5]:
-            st.success(f"📰 {to_korean(n['headline'])} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
+            st.success(f"📰 {news_headline_link(n)} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
     else:
         st.caption(f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 지지 관점 키워드 매칭 없음")
 
@@ -286,9 +296,9 @@ elif st.session_state.step == 4:
 
     for n in st.session_state.news_classified:
         if n["lean"] == "bullish":
-            qual_bullish.append(f"[정성] 뉴스: {to_korean(n['headline'])}")
+            qual_bullish.append(f"[정성] 뉴스: {news_headline_link(n)}")
         elif n["lean"] == "bearish":
-            qual_bearish.append(f"[정성] 뉴스: {to_korean(n['headline'])}")
+            qual_bearish.append(f"[정성] 뉴스: {news_headline_link(n)}")
 
     bullish = tech_bullish + qual_bullish
     bearish = tech_bearish + qual_bearish
