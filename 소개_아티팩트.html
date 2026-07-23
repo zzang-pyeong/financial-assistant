@@ -1,0 +1,537 @@
+<meta charset="UTF-8" />
+<title>Devil's Advocate — 소개</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #eceef1;
+    --surface: #ffffff;
+    --surface-2: #e3e7ec;
+    --ink: #1a1e24;
+    --ink-soft: #5b636e;
+    --rule: #d2d8df;
+    --accent: #b96612;
+    --accent-ink: #fff7ee;
+    --bearish: #c0392b;
+    --bullish: #2f7d55;
+    --chip-bg: #dde2e8;
+    --shadow: rgba(20, 28, 40, 0.10);
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", "Courier New", monospace;
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    --sans: -apple-system, "Segoe UI", "Malgun Gothic", system-ui, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --surface: #1d222a;
+      --surface-2: #242a33;
+      --ink: #e8ecf1;
+      --ink-soft: #98a1ac;
+      --rule: #333b45;
+      --accent: #e39a49;
+      --accent-ink: #1a1710;
+      --bearish: #e2695b;
+      --bullish: #5cb488;
+      --chip-bg: #2c333d;
+      --shadow: rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --surface: #1d222a; --surface-2: #242a33;
+    --ink: #e8ecf1; --ink-soft: #98a1ac; --rule: #333b45;
+    --accent: #e39a49; --accent-ink: #1a1710; --bearish: #e2695b;
+    --bullish: #5cb488; --chip-bg: #2c333d; --shadow: rgba(0, 0, 0, 0.4);
+  }
+  :root[data-theme="light"] {
+    --bg: #eceef1; --surface: #ffffff; --surface-2: #e3e7ec;
+    --ink: #1a1e24; --ink-soft: #5b636e; --rule: #d2d8df;
+    --accent: #b96612; --accent-ink: #fff7ee; --bearish: #c0392b;
+    --bullish: #2f7d55; --chip-bg: #dde2e8; --shadow: rgba(20, 28, 40, 0.10);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); overflow: hidden;
+  }
+  ::selection { background: var(--accent); color: var(--accent-ink); }
+
+  .deck { position: relative; height: 100vh; width: 100vw; }
+
+  /* ---- side dock ---- */
+  .rail {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 60px; z-index: 20;
+    display: flex; flex-direction: column; background: var(--surface-2);
+    border-right: 1px solid var(--rule);
+  }
+  .rail button {
+    all: unset; flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+    writing-mode: vertical-rl; cursor: pointer;
+    font-size: 0.8rem; letter-spacing: 0.22em; font-weight: 600;
+    color: var(--ink-soft); border-bottom: 1px solid var(--rule);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .rail button:last-child { border-bottom: none; }
+  .rail button:hover { color: var(--ink); background: var(--surface); }
+  .rail button.active { color: var(--accent-ink); background: var(--accent); font-weight: 700; }
+  .rail button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* ---- slides ---- */
+  .slides { position: relative; margin-left: 60px; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0; padding: 8vh 7vw 10vh 7vw;
+    display: flex; flex-direction: column; justify-content: center; gap: 1.3rem;
+    opacity: 0; pointer-events: none; transform: translateX(16px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+    overflow-y: auto;
+  }
+  .slide.active { opacity: 1; pointer-events: auto; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .slide { transition: opacity 0.01s linear; transform: none; }
+  }
+
+  .eyebrow {
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.14em;
+    font-size: 0.76rem; color: var(--accent); font-weight: 600;
+    display: inline-flex; align-items: center; gap: 0.6rem;
+  }
+  .eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--accent); display: inline-block; }
+
+  h1, h2 { margin: 0; line-height: 1.12; text-wrap: balance; letter-spacing: -0.02em; font-weight: 800; }
+  .slide h2 { font-size: clamp(1.7rem, 3.6vw, 2.7rem); }
+  .slide p { max-width: 64ch; line-height: 1.65; }
+  .slide .lede { color: var(--ink-soft); max-width: 62ch; }
+
+  .cover h1 { font-size: clamp(2.8rem, 8vw, 5.4rem); letter-spacing: -0.035em; }
+  .cover .kicker {
+    font-family: var(--mono); font-size: 0.82rem; color: var(--ink-soft); letter-spacing: 0.06em;
+  }
+  .cover .tagline { font-size: clamp(1.05rem, 2vw, 1.3rem); color: var(--ink); max-width: 54ch; font-weight: 500; }
+  .thesis {
+    border-left: 3px solid var(--accent); padding-left: 1.1rem; margin-top: 0.4rem;
+    max-width: 56ch; font-family: var(--serif); font-style: italic;
+    font-size: 1.08rem; color: var(--ink-soft); line-height: 1.7;
+  }
+  /* opposition motif */
+  .motif { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; font-family: var(--mono); font-size: 0.9rem; margin-top: 0.5rem; }
+  .motif .want { color: var(--ink-soft); }
+  .motif .stop { background: var(--accent); color: var(--accent-ink); padding: 0.15rem 0.6rem; border-radius: 2px; font-weight: 700; }
+  .motif .against { color: var(--bearish); font-weight: 700; }
+  .motif .ar { color: var(--ink-soft); }
+
+  .facts { display: flex; gap: 2.2rem; flex-wrap: wrap; margin-top: 0.8rem; }
+  .facts div { font-family: var(--mono); font-size: 0.86rem; }
+  .facts span { display: block; color: var(--ink-soft); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.2rem; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; max-width: 1000px; }
+  .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 1.1rem 1.2rem; box-shadow: 0 1px 3px var(--shadow); }
+  .card h3 { font-size: 1.02rem; margin: 0 0 0.5rem; font-weight: 700; }
+  .card h3 .mk { color: var(--accent); font-family: var(--mono); font-size: 0.82rem; margin-right: 0.4rem; }
+  .card p { margin: 0; font-size: 0.92rem; color: var(--ink-soft); max-width: none; }
+
+  table.problems { border-collapse: collapse; max-width: 780px; font-size: 0.93rem; }
+  table.problems th, table.problems td { text-align: left; padding: 0.55rem 0.9rem 0.55rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  table.problems th { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); }
+  table.problems td:first-child { font-weight: 600; white-space: nowrap; padding-right: 1.6rem; }
+
+  .diagram-wrap { overflow-x: auto; max-width: 100%; padding-bottom: 0.5rem; }
+  .diagram-wrap svg { display: block; }
+  .legend { display: flex; gap: 1.4rem; font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); }
+  .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.4rem; vertical-align: middle; }
+
+  .xerox-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.1rem; max-width: 1120px; }
+  .xerox { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 1.1rem 1.15rem; box-shadow: 0 1px 3px var(--shadow); }
+  .xerox .tag { font-family: var(--mono); font-size: 0.72rem; color: var(--accent); font-weight: 700; letter-spacing: 0.05em; }
+  .xerox h4 { margin: 0.15rem 0 0.7rem; font-size: 0.98rem; font-weight: 700; }
+  .xerox .row { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.86rem; padding: 0.3rem 0; border-bottom: 1px solid var(--rule); }
+  .xerox .row:last-child { border-bottom: none; }
+  .xerox .row .k { color: var(--ink-soft); }
+  .xerox .row .v { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  .xerox .note { font-size: 0.82rem; padding: 0.35rem 0.6rem; border-radius: 4px; margin: 0.35rem 0; }
+  .xerox .note.bear { background: color-mix(in srgb, var(--bearish) 12%, var(--surface)); color: var(--bearish); }
+  .xerox .note.bull { background: color-mix(in srgb, var(--bullish) 12%, var(--surface)); color: var(--bullish); }
+  .xerox .chk { display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; margin-top: 0.6rem; color: var(--ink-soft); }
+  .xerox .chk .box { width: 13px; height: 13px; border: 1.5px solid var(--ink-soft); border-radius: 2px; flex: none; }
+
+  .corrections { display: flex; flex-direction: column; gap: 0.85rem; max-width: 800px; }
+  .correction { border-bottom: 1px solid var(--rule); padding-bottom: 0.85rem; }
+  .correction .num { font-family: var(--mono); color: var(--accent); font-size: 0.78rem; font-weight: 700; }
+  .correction .before { color: var(--bearish); text-decoration: line-through; font-family: var(--mono); font-size: 0.9rem; }
+  .correction .after { color: var(--bullish); font-family: var(--mono); font-size: 0.9rem; font-weight: 700; }
+  .correction .why { color: var(--ink-soft); font-size: 0.88rem; margin-top: 0.25rem; }
+
+  .transcript { display: flex; flex-direction: column; gap: 1rem; max-width: 760px; }
+  .qa .q { font-weight: 700; font-size: 1.02rem; }
+  .qa .q::before { content: "Q "; color: var(--accent); font-family: var(--mono); font-weight: 700; }
+  .qa .a { color: var(--ink-soft); margin-top: 0.25rem; font-size: 0.92rem; }
+  .qa .a::before { content: "A "; color: var(--ink-soft); font-family: var(--mono); }
+
+  .pending { display: flex; flex-direction: column; gap: 0.6rem; max-width: 720px; }
+  .pending .item { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.94rem; }
+  .pending .chip { font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; background: var(--chip-bg); color: var(--ink-soft); padding: 0.16rem 0.5rem; border-radius: 3px; flex: none; }
+
+  .navbar {
+    position: fixed; right: 0; left: 60px; bottom: 0; height: 52px; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 1.4rem;
+    background: var(--surface-2); border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft);
+  }
+  .navbar .status { letter-spacing: 0.04em; }
+  .navbar .buttons { display: flex; gap: 0.5rem; }
+  .navbar button.nav-btn {
+    all: unset; cursor: pointer; padding: 0.4rem 0.9rem; border: 1px solid var(--rule);
+    border-radius: 4px; font-family: var(--mono); font-size: 0.78rem; color: var(--ink); background: var(--surface);
+  }
+  .navbar button.nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .navbar button.nav-btn:disabled { opacity: 0.35; cursor: default; }
+  .navbar button.nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  @media (max-width: 640px) {
+    .rail button { font-size: 0.68rem; letter-spacing: 0.12em; }
+    .slide { padding: 6vh 6vw 9vh 6vw; }
+  }
+</style>
+
+<div class="deck">
+  <nav class="rail" id="rail" aria-label="목차"></nav>
+
+  <div class="slides" id="slides">
+
+    <!-- COVER -->
+    <section class="slide cover" data-title="소개">
+      <div class="kicker">스윙 트레이딩 의사결정 보조 도구</div>
+      <h1>Devil's&nbsp;Advocate</h1>
+      <p class="tagline">사고 싶을 때, 일부러 <strong>반대편에 서는</strong> 도구. 지표를 대신 판단해주지 않고, 결정의 순간에 마찰을 만든다.</p>
+      <div class="motif">
+        <span class="want">사고 싶다</span>
+        <span class="ar">→</span>
+        <span class="stop">잠깐</span>
+        <span class="ar">→</span>
+        <span class="against">반대 근거부터</span>
+      </div>
+      <div class="thesis">
+        "매매자가 포지션을 잡기 직전, 자신의 의도와 반대되는 근거를 강제로 먼저 마주하게 함으로써
+        확증 편향에 제동을 걸고, 손절·익절·매수 수량 원칙을 규율화하는 도구."
+      </div>
+      <div class="facts">
+        <div><span>대상 시장</span>NASDAQ</div>
+        <div><span>테스트 티커</span>USAR</div>
+        <div><span>구현</span>Python · Streamlit</div>
+        <div><span>데이터</span>FinanceDataReader · yfinance · Finnhub · SEC EDGAR</div>
+      </div>
+    </section>
+
+    <!-- WHY -->
+    <section class="slide" data-title="왜 만들었나">
+      <div class="eyebrow">왜 만들었나 · 의도와 방향</div>
+      <h2>정보에서 이길 수 없다면,<br />규율로 이긴다</h2>
+      <p class="lede">시장엔 항상 정보 시차가 있다. "먼저" 안다는 것 자체가 환상에 가깝다. 그래서 이 도구는
+        속도 경쟁을 포기하고, 대신 결정의 순간에 확증 편향과 감정을 억제하는 마찰을 설계했다.</p>
+
+      <table class="problems">
+        <tr><th>문제</th><th>대응</th></tr>
+        <tr><td>정보 시차</td><td>풀 수 없음 — 전제로 수용, 데이터 신선도만 투명하게 노출</td></tr>
+        <tr><td>감정 개입</td><td>의지로 억제 불가 → 자동산출 + 확인 강제로 마찰 지점 이동</td></tr>
+        <tr><td>확증 편향</td><td>양쪽 근거를 나란히 둬도 편향된 쪽만 골라봄 → 반대 관점부터 강제 노출</td></tr>
+        <tr><td>측정 불가능성</td><td>도구 밖 행동을 못 보면 효과 검증 불가 → 매매일지 자동 기록</td></tr>
+      </table>
+
+      <div class="grid3">
+        <div class="card"><h3><span class="mk">A</span>비대칭 노출</h3><p>사용자 의도의 반대편을 항상 먼저, 더 크게 보여준다. 확인 전엔 다음 단계로 못 간다.</p></div>
+        <div class="card"><h3><span class="mk">B</span>병치, 비집계</h3><p>지표를 하나의 점수로 합치지 않는다. Peer 비교·소유구조도 병치만 하고 종합 게이지는 없다.</p></div>
+        <div class="card"><h3><span class="mk">C</span>마찰은 설계된 것</h3><p>손절·익절·수량은 자동 산출하되, 근거를 확인해야만 진행된다 — 마찰이 입력에서 확인으로 옮겨갔다.</p></div>
+        <div class="card"><h3><span class="mk">D</span>정보 제공, 자금관리 아님</h3><p>계좌 자본·리스크 허용비율처럼 개인 재무 상태를 밝혀야 하는 입력은 강제하지 않는다. 종목의 객관적 지표만 다룬다.</p></div>
+      </div>
+    </section>
+
+    <!-- FLOW -->
+    <section class="slide" data-title="어떻게 동작하나">
+      <div class="eyebrow">어떻게 동작하나 · 8단계 흐름</div>
+      <h2>8단계, 그중 3곳은 그냥 못 지나간다</h2>
+      <p class="lede">데이터는 병렬로 모으지만, 사용자가 보는 화면은 순서가 있다. 굵은 테두리로 표시된 3단계는
+        확인 없이는 넘어갈 수 없는 강제 관문이다.</p>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--ink-soft)"></span>일반 단계</span>
+        <span><span class="dot" style="background:var(--bearish)"></span>강제 관문 (확인해야 진행)</span>
+      </div>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1780 175" width="1780" height="175" role="img" aria-label="8단계 의사결정 흐름도">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-soft)"></path>
+            </marker>
+          </defs>
+          <g stroke="var(--ink-soft)" stroke-width="1.5" marker-end="url(#arrow)">
+            <line x1="196" y1="70" x2="228" y2="70"></line>
+            <line x1="416" y1="70" x2="448" y2="70"></line>
+            <line x1="636" y1="70" x2="668" y2="70"></line>
+            <line x1="856" y1="70" x2="888" y2="70"></line>
+            <line x1="1076" y1="70" x2="1108" y2="70"></line>
+            <line x1="1296" y1="70" x2="1328" y2="70"></line>
+            <line x1="1516" y1="70" x2="1548" y2="70"></line>
+          </g>
+          <g>
+            <rect x="16" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--rule)"></rect>
+            <text x="30" y="45" font-family="var(--mono)" font-size="11" fill="var(--ink-soft)">STEP 1</text>
+            <text x="30" y="70" font-size="15" fill="var(--ink)" font-weight="700">티커 입력 ·</text>
+            <text x="30" y="90" font-size="15" fill="var(--ink)" font-weight="700">의도 선언</text>
+
+            <rect x="236" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--bearish)" stroke-width="2.5"></rect>
+            <text x="250" y="45" font-family="var(--mono)" font-size="11" fill="var(--bearish)">STEP 2 · 필수</text>
+            <text x="250" y="70" font-size="15" fill="var(--ink)" font-weight="700">반대 관점</text>
+            <text x="250" y="90" font-size="15" fill="var(--ink)" font-weight="700">강제 노출</text>
+
+            <rect x="456" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--rule)"></rect>
+            <text x="470" y="45" font-family="var(--mono)" font-size="11" fill="var(--ink-soft)">STEP 3</text>
+            <text x="470" y="70" font-size="15" fill="var(--ink)" font-weight="700">지지 관점</text>
+            <text x="470" y="90" font-size="15" fill="var(--ink)" font-weight="700">확인</text>
+
+            <rect x="676" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--rule)"></rect>
+            <text x="690" y="45" font-family="var(--mono)" font-size="11" fill="var(--ink-soft)">STEP 4</text>
+            <text x="690" y="70" font-size="15" fill="var(--ink)" font-weight="700">Conflict</text>
+            <text x="690" y="90" font-size="15" fill="var(--ink)" font-weight="700">Board</text>
+
+            <rect x="896" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--bearish)" stroke-width="2.5"></rect>
+            <text x="910" y="45" font-family="var(--mono)" font-size="11" fill="var(--bearish)">STEP 5 · 필수</text>
+            <text x="910" y="66" font-size="14" fill="var(--ink)" font-weight="700">손절·익절·</text>
+            <text x="910" y="86" font-size="14" fill="var(--ink)" font-weight="700">수량 자동산출</text>
+            <text x="910" y="104" font-size="11" fill="var(--ink-soft)">근거 확인 필요</text>
+
+            <rect x="1116" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--bearish)" stroke-width="2.5"></rect>
+            <text x="1130" y="45" font-family="var(--mono)" font-size="11" fill="var(--bearish)">STEP 6 · 필수</text>
+            <text x="1130" y="70" font-size="15" fill="var(--ink)" font-weight="700">결정 이유</text>
+            <text x="1130" y="90" font-size="15" fill="var(--ink)" font-weight="700">메모 입력</text>
+
+            <rect x="1336" y="20" width="180" height="100" rx="6" fill="var(--surface)" stroke="var(--rule)"></rect>
+            <text x="1350" y="45" font-family="var(--mono)" font-size="11" fill="var(--ink-soft)">STEP 7</text>
+            <text x="1350" y="70" font-size="15" fill="var(--ink)" font-weight="700">최종 확인</text>
+
+            <rect x="1556" y="20" width="204" height="100" rx="6" fill="var(--surface)" stroke="var(--rule)"></rect>
+            <text x="1570" y="45" font-family="var(--mono)" font-size="11" fill="var(--ink-soft)">STEP 8</text>
+            <text x="1570" y="70" font-size="15" fill="var(--ink)" font-weight="700">매매일지</text>
+            <text x="1570" y="90" font-size="15" fill="var(--ink)" font-weight="700">자동 기록</text>
+          </g>
+          <g font-family="var(--sans)" fill="var(--ink-soft)" font-size="12">
+            <text x="16" y="150">체크박스로 근거 확인 &#8594; 다음 버튼 활성화</text>
+            <text x="896" y="150">MAX/MIN 공식 자동 산출 &#8594; 근거 펼치면 진행 가능</text>
+            <text x="1116" y="150">한 줄 이상 입력해야 진행</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <!-- RESULTS -->
+    <section class="slide" data-title="실제로 돌려보면">
+      <div class="eyebrow">실제로 돌려보면 · USAR 실행 결과</div>
+      <h2>실제 값으로 돌려본 결과</h2>
+      <p class="lede">2026-07-23, USA Rare Earth(USAR)를 매수 검토로 넣었을 때 실제로 나온 값이다.
+        화면을 그대로 옮긴 캡처가 아니라, 실제 산출값으로 다시 그린 재현본이다.</p>
+      <div class="xerox-row">
+        <div class="xerox">
+          <span class="tag">01</span>
+          <h4>입력</h4>
+          <div class="row"><span class="k">나스닥 티커</span><span class="v">USAR</span></div>
+          <div class="row"><span class="k">포지션 의도</span><span class="v">매수 검토</span></div>
+          <div class="note bull">계좌 자본·리스크 허용비율은 입력받지 않음 — 이게 전부다</div>
+        </div>
+        <div class="xerox">
+          <span class="tag">02</span>
+          <h4>반대 관점 (강제)</h4>
+          <div class="note bear">이동평균 역배열 — 15.82 &lt; MA20 18.42 &lt; MA60 22.67</div>
+          <div class="note bear">공매도 비율 14.5% — 주목할 만한 수준</div>
+          <div class="note bear">포워드 PER 527.3 — 동종 peer 평균의 11.3배</div>
+          <div class="chk"><span class="box"></span>위 반대 관점 근거를 확인했습니다</div>
+        </div>
+        <div class="xerox">
+          <span class="tag">03</span>
+          <h4>Conflict Board</h4>
+          <div class="note bull">[기술] RSI(14) 28.9 — 과매도, 반등 가능성</div>
+          <div class="note bull">[정성] 애널리스트 매수 13 · 매도 0</div>
+          <div class="note bear">[기술] 이동평균 역배열</div>
+        </div>
+        <div class="xerox">
+          <span class="tag">04</span>
+          <h4>손절 · 익절 · 사이징</h4>
+          <div class="row"><span class="k">손절가 (스윙로우 채택)</span><span class="v">$14.43</span></div>
+          <div class="row"><span class="k">보수적 익절가 50% (R:R 1.5)</span><span class="v">$17.90</span></div>
+          <div class="row"><span class="k">매수수량 (예시, 계좌 $10k·1% 가정)</span><span class="v">71.9주</span></div>
+          <div class="row"><span class="k">축소 배수</span><span class="v">1.0×</span></div>
+        </div>
+        <div class="xerox">
+          <span class="tag">05</span>
+          <h4>Peer 비교 + 재무 건전성</h4>
+          <div class="row"><span class="k">Forward PE (대상)</span><span class="v">527.3</span></div>
+          <div class="row"><span class="k">Tier1 평균 (n=1, MP)</span><span class="v">46.6</span></div>
+          <div class="row"><span class="k">배수</span><span class="v">11.3×</span></div>
+          <div class="row"><span class="k">대상 EV/Rev · 당좌비율</span><span class="v">243.9 · 35.6</span></div>
+          <div class="row"><span class="k">대상 현금 런웨이</span><span class="v">여유 208.7개월</span></div>
+          <div class="note bear">Peer 중 EMAT — 런웨이 4개월, 당좌비율 0.10 (유동성 위기)</div>
+        </div>
+        <div class="xerox">
+          <span class="tag">06</span>
+          <h4>소유구조</h4>
+          <div class="row"><span class="k">기관 보유율</span><span class="v">51.0%</span></div>
+          <div class="row"><span class="k">내부자 보유율</span><span class="v">16.1%</span></div>
+          <div class="row"><span class="k">유동주식비율</span><span class="v">79.1%</span></div>
+          <div class="row"><span class="k">Passive : Active</span><span class="v">76 : 24</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MISTAKES -->
+    <section class="slide" data-title="만들면서 틀린 것들">
+      <div class="eyebrow">만들면서 틀린 것들</div>
+      <h2>틀렸던 것들을, 숨기지 않고 남긴다</h2>
+      <p class="lede">원칙 B(가짜 정밀도 배제)는 이 도구 자체를 만드는 과정에도 똑같이 적용했다 —
+        틀린 걸 조용히 고치지 않고 기록으로 남긴다.</p>
+      <div class="corrections">
+        <div class="correction">
+          <div class="num">01 · 실적발표 D-day</div>
+          <div><span class="before">D-19 (달력일로 계산)</span> &#8594; <span class="after">D-13 (영업일, np.busday_count)</span></div>
+          <div class="why">스펙은 "영업일 10일"인데 코드에선 달력일 뺄셈을 씀 — 실제 축소배수 판정이 틀릴 뻔함</div>
+        </div>
+        <div class="correction">
+          <div class="num">02 · Peer 비교 그룹</div>
+          <div><span class="before">Finnhub 산업분류만 신뢰</span> &#8594; <span class="after">키워드 2차 필터(Tier1/Tier2)</span></div>
+          <div class="why">텅스텐·베릴륨·감자칼륨 회사까지 "동종 희토류"로 섞여 들어옴을 뒤늦게 발견</div>
+        </div>
+        <div class="correction">
+          <div class="num">03 · 애널리스트 뉴스 필터</div>
+          <div><span class="before">"coverage" 단독 키워드</span> &#8594; <span class="after">"initiates coverage" 등 구체 문구</span></div>
+          <div class="why">무관한 실시간 시황 기사까지 오매칭되는 걸 실제 데이터로 확인</div>
+        </div>
+        <div class="correction">
+          <div class="num">04 · 액티브/패시브 직관</div>
+          <div><span class="before">"액티브 펀드가 확신 매수했다"</span> &#8594; <span class="after">실제론 Passive 76% 우세</span></div>
+          <div class="why">코드로 검증하지 않았다면 틀린 결론을 그대로 믿었을 것</div>
+        </div>
+        <div class="correction">
+          <div class="num">05 · 조사 오류</div>
+          <div><span class="before">"검토을 지지하는 근거"</span> &#8594; <span class="after">"검토를 지지하는 근거"</span></div>
+          <div class="why">사소하지만 사용자 대면 문구라 바로 수정</div>
+        </div>
+        <div class="correction">
+          <div class="num">06 · 이 소개 페이지의 인코딩</div>
+          <div><span class="before">&lt;title&gt;만 두고 charset 선언 누락</span> &#8594; <span class="after">&lt;meta charset="UTF-8"&gt; 추가</span></div>
+          <div class="why">바로 이 페이지를 만들 때 한글이 전부 깨져서(&ldquo;ì‚¬ê±´ ê¸°ë¡&rdquo;) 발견 — 실수는 지금도 진행 중이다</div>
+        </div>
+        <div class="correction">
+          <div class="num">07 · 포지션 사이징 상한 누락</div>
+          <div><span class="before">계좌 자본 초과 가능 (상한 없음)</span> &#8594; <span class="after">MIN(리스크 기반 수량, 계좌자본/진입가)</span></div>
+          <div class="why">손절폭이 좁은 고가 종목이면 리스크 계산만으론 계좌보다 큰 매수금액이 나올 수 있음 —
+            "리스크 허용 금액이 어떻게 산출되냐"는 질문에 답하다가 직접 발견</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Q&A -->
+    <section class="slide" data-title="오가며 나눈 질문들">
+      <div class="eyebrow">오가며 나눈 질문들</div>
+      <h2>만들면서 오간 질문과 답</h2>
+      <div class="transcript">
+        <div class="qa">
+          <div class="q">손절·익절을 기술적 지표로 어떻게 잡을 것인가?</div>
+          <div class="a">손절은 여러 후보 중 가장 보수적인 값(MAX), 익절은 50%를 가까운 목표(MIN)로 확정하고
+            나머지 50%는 추격손절로 트레일링.</div>
+        </div>
+        <div class="qa">
+          <div class="q">실적 발표가 임박하면 어떻게 하나?</div>
+          <div class="a">변동성이 커지니 포지션 사이징에 축소 배수(×0.5)를 적용하기로 함.</div>
+        </div>
+        <div class="qa">
+          <div class="q">Peer 중에 진짜 같은 업종은 어떻게 가려내나?</div>
+          <div class="a">Finnhub 산업분류로 후보를 넓게 뽑고, 사업 설명 텍스트의 키워드로 2차 필터링해 Tier1/Tier2로 구분.</div>
+        </div>
+        <div class="qa">
+          <div class="q">애널리스트 매수의견의 실제 근거를 모아볼 수 있나?</div>
+          <div class="a">목표가 컨센서스·개별 등급변경 API는 실제로 호출해보니 유료 전용이었다. 대신 뉴스에서
+            "price target", "initiates coverage" 같은 키워드로 관련 기사만 근사 필터링.</div>
+        </div>
+        <div class="qa">
+          <div class="q">Peer 비교에서 PER만 보는 건 위험하지 않나?</div>
+          <div class="a">실제로 peer 7종목을 확인해보니 trailing PER은 2/7, PEG는 2/7만 채워졌다 —
+            적자 소형주 섹터에선 이익 기반 지표가 통계적으로 무력화된다. EV/Revenue·유동비율·
+            부채비율·현금 런웨이(보유현금÷연간FCF소진액)를 추가했더니, PER로는 그냥 "데이터
+            없음"이었던 EMAT이 실제론 런웨이 4개월·당좌비율 0.10짜리 유동성 위기라는 게 드러났다.</div>
+        </div>
+        <div class="qa">
+          <div class="q">계좌 자본·리스크 허용비율까지 입력받아야 하나?</div>
+          <div class="a">아니다 — 이 도구의 목적은 개인 자금관리가 아니라 객관적 매매 정보 제공이다.
+            사용자의 실제 재무 상태를 밝히게 하는 입력은 UX에도, 취지에도 안 맞는다고 판단해
+            제거했다. 대신 계좌 $10,000·리스크 1%라는 기본 가정으로 계산한 "참고용 예시"만
+            보여주고, 실제 매수 수량은 사용자가 직접 정하게 했다 (원칙 D).</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PENDING -->
+    <section class="slide" data-title="아직 남은 것들">
+      <div class="eyebrow">아직 남은 것들</div>
+      <h2>아직 정해지지 않은 것들</h2>
+      <div class="pending">
+        <div class="item"><span class="chip">검증 전</span>실사용 전 백테스트 — 승률·손익비·MDD 확인 필요</div>
+        <div class="item"><span class="chip">보류</span>애널리스트 공신력 가중치 — 별도 스파이크로 격하</div>
+        <div class="item"><span class="chip">갭</span>락업 해제일 자동 감지 — 공식 API 없음, 수동 리서치 필요</div>
+        <div class="item"><span class="chip">근사치</span>뉴스 톤 분석 — 키워드 매칭, 정밀 NLP 모델 아님</div>
+        <div class="item"><span class="chip">보안</span>공개 배포 시 API 키를 .env → Secrets로 전환 필요</div>
+      </div>
+      <p class="lede" style="margin-top:1rem">이 도구는 "제안·보조 도구"로만 포지셔닝하며, 검증 전까지 성과를 홍보하지 않는다.</p>
+    </section>
+
+  </div>
+
+  <div class="navbar">
+    <span class="status" id="status"></span>
+    <div class="buttons">
+      <button class="nav-btn" id="prevBtn" type="button">&#8592; 이전</button>
+      <button class="nav-btn" id="nextBtn" type="button">다음 &#8594;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+    var rail = document.getElementById("rail");
+    var status = document.getElementById("status");
+    var prevBtn = document.getElementById("prevBtn");
+    var nextBtn = document.getElementById("nextBtn");
+    var current = 0;
+
+    var labels = ["소개", "취지", "흐름", "결과", "실수", "문답", "남은"];
+    labels.forEach(function (label, i) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      btn.addEventListener("click", function () { goTo(i); });
+      rail.appendChild(btn);
+    });
+
+    function render() {
+      slides.forEach(function (s, i) {
+        s.classList.toggle("active", i === current);
+        s.setAttribute("aria-hidden", i === current ? "false" : "true");
+      });
+      Array.prototype.slice.call(rail.children).forEach(function (btn, i) {
+        btn.classList.toggle("active", i === current);
+      });
+      var title = slides[current].getAttribute("data-title");
+      status.textContent = title + " · " + (current + 1) + " / " + slides.length;
+      prevBtn.disabled = current === 0;
+      nextBtn.disabled = current === slides.length - 1;
+    }
+
+    function goTo(i) {
+      current = Math.max(0, Math.min(slides.length - 1, i));
+      render();
+    }
+
+    prevBtn.addEventListener("click", function () { goTo(current - 1); });
+    nextBtn.addEventListener("click", function () { goTo(current + 1); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight") goTo(current + 1);
+      if (e.key === "ArrowLeft") goTo(current - 1);
+    });
+
+    render();
+  })();
+</script>

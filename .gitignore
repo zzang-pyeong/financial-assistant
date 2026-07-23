@@ -1,0 +1,10 @@
+# 비밀키 — 절대 커밋 금지
+webapp/.env
+.env
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 로컬 매매일지 (개인 기록, 저장소에 남기지 않음)
+webapp/trade_journal.csv
