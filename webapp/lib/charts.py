@@ -24,8 +24,8 @@ def render_price_chart_figure(df, period_days=None):
     has_volume = "Volume" in view.columns
     fig = make_subplots(
         rows=2 if has_volume else 1, cols=1, shared_xaxes=True,
-        row_heights=[0.75, 0.25] if has_volume else [1.0],
-        vertical_spacing=0.03,
+        row_heights=[0.65, 0.35] if has_volume else [1.0],
+        vertical_spacing=0.05,
     )
 
     fig.add_trace(go.Candlestick(
@@ -43,9 +43,12 @@ def render_price_chart_figure(df, period_days=None):
         vol_colors = [_UP_COLOR if c >= o else _DOWN_COLOR for o, c in zip(view["Open"], view["Close"])]
         fig.add_trace(go.Bar(x=view.index, y=view["Volume"], name="거래량", marker_color=vol_colors),
                       row=2, col=1)
+        # 거래량은 항상 0 이상이므로 축을 0부터 시작 — 안 그러면 자동 스케일이 음수 쪽까지
+        # 잡아 늘려서 막대가 절반도 안 되는 높이로 눌려 보임(실제 겪은 문제)
+        fig.update_yaxes(rangemode="tozero", title_text="거래량", row=2, col=1)
 
     fig.update_layout(
-        height=460,
+        height=520,
         margin=dict(l=10, r=10, t=10, b=10),
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),

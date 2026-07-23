@@ -72,11 +72,12 @@ if st.session_state.step >= 2:
 
     with st.sidebar:
         st.caption(f"📊 {st.session_state.ticker} 상세 데이터는 아래 페이지에서 각각 볼 수 있습니다.")
-        st.page_link("pages/1_섹터_Peer_비교.py", label="섹터 Peer 비교", icon="📊")
-        st.page_link("pages/2_Peer_목록.py", label="Peer 목록", icon="📋")
-        st.page_link("pages/3_소유구조.py", label="소유구조", icon="🏛️")
-        st.page_link("pages/4_애널리스트_뉴스.py", label="애널리스트 관련 뉴스", icon="📰")
-        st.page_link("pages/5_기업_이벤트_뉴스.py", label="기업 이벤트 뉴스", icon="🏢")
+        st.page_link("pages/1_차트.py", label="차트", icon="📈")
+        st.page_link("pages/2_섹터_Peer_비교.py", label="섹터 Peer 비교", icon="📊")
+        st.page_link("pages/3_Peer_목록.py", label="Peer 목록", icon="📋")
+        st.page_link("pages/4_소유구조.py", label="소유구조", icon="🏛️")
+        st.page_link("pages/5_애널리스트_뉴스.py", label="애널리스트 관련 뉴스", icon="📰")
+        st.page_link("pages/6_기업_이벤트_뉴스.py", label="기업 이벤트 뉴스", icon="🏢")
 
 # ----------------------------------------------------------------------------
 # STEP 1: 티커 입력 + 의도 선언
