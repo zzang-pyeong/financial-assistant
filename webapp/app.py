@@ -66,7 +66,7 @@ if st.session_state.step == 1:
     st.header("1. 티커 입력 & 포지션 의도 선언")
     raw_input = st.text_input(
         "티커 또는 기업명 (한글/영문 모두 가능, 예: USAR, Nvidia, 엔비디아)",
-        value=st.session_state.get("ticker", "USAR"),
+        value=st.session_state.get("ticker", ""),
     )
     intent = st.radio("포지션 의도", ["매수 검토", "매도 검토"], horizontal=True)
 
