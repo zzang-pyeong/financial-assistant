@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 import numpy as np
 import streamlit as st
@@ -29,7 +29,6 @@ from lib.translate import to_korean
 from lib.glossary import render_glossary
 from lib.journal import append_entry, load_journal
 from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
-from lib.charts import render_price_chart_figure, PERIOD_OPTIONS
 
 st.set_page_config(page_title="Devil's Advocate — 스윙 트레이딩 의사결정 보조", layout="wide")
 
@@ -55,6 +54,83 @@ def news_headline_link(n):
     return f"[{headline}]({n['url']})" if n.get("url") else headline
 
 
+def news_date_str(n):
+    """Finnhub unix timestamp를 날짜로 변환 — 뉴스 신선도 표시용."""
+    ts = n.get("datetime")
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    except (ValueError, OSError):
+        return None
+
+
+def evidence(msg):
+    """색상으로 방향(찬성/반대)을 암시하지 않고 중립적으로 근거 한 줄을 표시."""
+    st.markdown(f"- {msg}")
+
+
+def compute_flagged_context():
+    """이벤트/유동성/밸류에이션 등 부가 근거를 (문구, 방향태그, 카테고리)로 반환.
+    방향태그가 있어야 Step2/3에서 사용자가 선택한 포지션 방향에 맞춰 필터링할 수 있다
+    (기존엔 방향 무관하게 항상 Step2에만 나와서, 매도 검토 사용자에게는 반대로 보였음)."""
+    items = []  # (message, tag, category) — category: "risk" | "valuation"
+
+    if not st.session_state.regime_favorable:
+        items.append((
+            f"📉 시장 국면 비우호적 — QQQ({st.session_state.qqq_price:.2f}) < MA200({st.session_state.qqq_ma200:.2f})",
+            "bearish", "risk",
+        ))
+
+    ownership = st.session_state.ownership
+    if ownership["short_pct_float"] and ownership["short_pct_float"] > 0.1:
+        items.append((
+            f"🩳 공매도 비율 {ownership['short_pct_float']*100:.1f}% — 주목할 만한 수준",
+            "bearish", "risk",
+        ))
+
+    peer_stats = tier1_stats(st.session_state.peer_data["peers"])
+    fwd_pe = st.session_state.info.get("forwardPE")
+    if peer_stats and isinstance(fwd_pe, (int, float)) and fwd_pe > 0:
+        multiple = fwd_pe / peer_stats["mean"]
+        if multiple > 1.5:
+            items.append((
+                f"💰 포워드 PER {fwd_pe:.1f}가 동종 peer 평균({peer_stats['mean']:.1f}, n={peer_stats['n']})의 "
+                f"{multiple:.1f}배 — 고평가 논란",
+                "bearish", "valuation",
+            ))
+
+    target_health = st.session_state.target_health
+    if not target_health["fcf_positive"] and target_health["runway_months"] is not None \
+            and target_health["runway_months"] < RUNWAY_RISK_MONTHS:
+        items.append((
+            f"⏳ 현금 런웨이 {target_health['runway_months']:.1f}개월 — 단기 증자/희석 가능성 (PER과 무관한 생존 리스크)",
+            "bearish", "risk",
+        ))
+    if isinstance(target_health["quick_ratio"], (int, float)) and target_health["quick_ratio"] < QUICK_RATIO_RISK:
+        items.append((
+            f"💧 당좌비율 {target_health['quick_ratio']:.2f} — 단기 채무 대비 현금성자산 크게 부족",
+            "bearish", "risk",
+        ))
+
+    return items
+
+
+def render_neutral_context():
+    """방향과 무관하게 항상 참고할 이벤트/유동성 정보 (실적일 임박, 저유동주식) — Step2에서 한 번만 표시."""
+    earnings_date = st.session_state.earnings_date
+    if earnings_date:
+        days_left = int(np.busday_count(date.today(), earnings_date))
+        if days_left <= 10:
+            evidence(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능 (방향 무관)")
+        else:
+            st.caption(f"실적 발표일: {earnings_date} (D-{days_left}, 임박 아님)")
+
+    ownership = st.session_state.ownership
+    if ownership["float_ratio"] and ownership["float_ratio"] < 0.3:
+        evidence(f"💧 저유동주식 — 유동주식비율 {ownership['float_ratio']*100:.1f}% (방향과 무관하게 변동성 왜곡 위험)")
+
+
 st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
 st.caption("이 도구는 매매 신호를 대신 결정해주지 않습니다. 투자 조언이 아니며, 참고용 계산 보조 도구입니다.")
 
@@ -62,14 +138,6 @@ steps_label = ["1.티커/의도", "2.반대관점", "3.지지관점", "4.Conflic
 st.progress((st.session_state.step - 1) / 7, text=f"진행 단계: {steps_label[st.session_state.step - 1]}")
 
 if st.session_state.step >= 2:
-    with st.expander(f"📈 {st.session_state.ticker} 최근 주가 차트", expanded=True):
-        period_label = st.radio(
-            "기간", list(PERIOD_OPTIONS.keys()), index=2, horizontal=True, key="chart_period",
-        )
-        st.caption("가격·이동평균·거래량만 보여줍니다 — 매수/매도 신호를 표시하지 않습니다.")
-        fig = render_price_chart_figure(st.session_state.df, PERIOD_OPTIONS[period_label])
-        st.plotly_chart(fig, use_container_width=True)
-
     with st.sidebar:
         st.caption(f"📊 {st.session_state.ticker} 상세 데이터는 아래 페이지에서 각각 볼 수 있습니다.")
         st.page_link("pages/1_차트.py", label="차트", icon="📈")
@@ -78,21 +146,22 @@ if st.session_state.step >= 2:
         st.page_link("pages/4_소유구조.py", label="소유구조", icon="🏛️")
         st.page_link("pages/5_애널리스트_뉴스.py", label="애널리스트 관련 뉴스", icon="📰")
         st.page_link("pages/6_기업_이벤트_뉴스.py", label="기업 이벤트 뉴스", icon="🏢")
+        st.page_link("pages/7_옵션_데이터.py", label="옵션 데이터", icon="🧮")
 
 # ----------------------------------------------------------------------------
 # STEP 1: 티커 입력 + 의도 선언
 # ----------------------------------------------------------------------------
 if st.session_state.step == 1:
-    st.header("1. 티커 입력 & 포지션 의도 선언")
+    st.header("1. 티커 입력 & 포지션 선택")
     raw_input = st.text_input(
         "티커 또는 기업명 (한글/영문 모두 가능, 예: USAR, Nvidia, 엔비디아)",
         value=st.session_state.get("ticker", ""),
     )
-    intent = st.radio("포지션 의도", ["매수 검토", "매도 검토"], index=None, horizontal=True)
+    intent = st.radio("포지션", ["매수 검토", "매도 검토"], index=None, horizontal=True)
 
     if st.button("분석 시작 →", type="primary"):
         if not intent:
-            st.error("포지션 의도(매수 검토/매도 검토)를 선택해주세요.")
+            st.error("포지션(매수 검토/매도 검토)을 선택해주세요.")
             st.stop()
         with st.spinner(f"'{raw_input}' 티커 확인 중..."):
             ticker, matched_name = resolve_ticker(raw_input)
@@ -148,6 +217,7 @@ if st.session_state.step == 1:
         st.session_state.pop("memo", None)
         st.session_state.pop("stop", None)
         st.session_state.pop("take_profit", None)
+        st.session_state.pop("entry_price", None)
 
         st.session_state.update(
             ticker=ticker, intent=intent,
@@ -168,54 +238,41 @@ elif st.session_state.step == 2:
     opposite_tag = "bearish" if intent == "매수 검토" else "bullish"
     st.header(f"2. ⚠️ 반대 관점부터 확인하세요 ({intent}에 대한 회의적 근거)")
     st.warning("이 단계를 건너뛸 수 없습니다. 아래 근거를 먼저 확인해야 다음 단계로 진행됩니다.")
+    st.caption("색상으로 유불리를 표시하지 않습니다 — 아래는 모두 당신의 의도(위 제목)와 반대되는 근거입니다.")
     render_glossary(["RSI", "MACD", "이동평균(MA)", "볼린저밴드", "ATR"], title="ℹ️ 기술적 지표 설명")
 
+    st.subheader("🔧 기술적 근거")
     signals = st.session_state.signals
     opposite_signals = [s for s in signals if s[2] == opposite_tag]
     if not opposite_signals:
-        st.info("기술적 지표상 뚜렷한 반대 근거는 없습니다. 다만 아래 리스크 항목은 확인하세요.")
+        st.caption("기술적 지표상 뚜렷한 반대 근거는 없습니다.")
     for name, desc, _ in opposite_signals:
-        st.error(f"**{name}** — {desc}")
+        evidence(f"**{name}** — {desc}")
 
-    # 이벤트 리스크 / 소유구조 기반 추가 회의적 근거
-    st.subheader("추가 리스크 근거")
-    earnings_date = st.session_state.earnings_date
-    if earnings_date:
-        days_left = int(np.busday_count(date.today(), earnings_date))
-        if days_left <= 10:
-            st.error(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능")
-        else:
-            st.caption(f"실적 발표일: {earnings_date} (D-{days_left}, 임박 아님)")
+    st.subheader("⚠️ 이벤트·유동성 리스크")
+    st.caption("방향과 무관한 일반 참고 항목 + 당신의 의도와 반대되는 리스크 항목")
+    render_neutral_context()
+    context_items = compute_flagged_context()
+    risk_items = [msg for msg, tag, cat in context_items if cat == "risk" and tag == opposite_tag]
+    for msg in risk_items:
+        evidence(msg)
+    if not risk_items:
+        st.caption("반대 방향 이벤트·유동성 리스크 없음")
 
-    if not st.session_state.regime_favorable:
-        st.error(f"📉 시장 국면 비우호적 — QQQ({st.session_state.qqq_price:.2f}) < MA200({st.session_state.qqq_ma200:.2f})")
+    st.subheader("💰 밸류에이션 근거")
+    valuation_items = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == opposite_tag]
+    if valuation_items:
+        for msg in valuation_items:
+            evidence(msg)
+    else:
+        st.caption("반대 방향 밸류에이션 근거 없음")
 
-    ownership = st.session_state.ownership
-    if ownership["float_ratio"] and ownership["float_ratio"] < 0.3:
-        st.error(f"💧 저유동주식 — 유동주식비율 {ownership['float_ratio']*100:.1f}% (변동성 왜곡 위험)")
-    if ownership["short_pct_float"] and ownership["short_pct_float"] > 0.1:
-        st.error(f"🩳 공매도 비율 {ownership['short_pct_float']*100:.1f}% — 주목할 만한 수준")
-
-    peer_stats = tier1_stats(st.session_state.peer_data["peers"])
-    fwd_pe = st.session_state.info.get("forwardPE")
-    if peer_stats and isinstance(fwd_pe, (int, float)) and fwd_pe > 0:
-        multiple = fwd_pe / peer_stats["mean"]
-        if multiple > 1.5:
-            st.error(f"💰 포워드 PER {fwd_pe:.1f}가 동종 peer 평균({peer_stats['mean']:.1f}, n={peer_stats['n']})의 {multiple:.1f}배 — 고평가 논란")
-
-    target_health = st.session_state.target_health
-    if not target_health["fcf_positive"] and target_health["runway_months"] is not None \
-            and target_health["runway_months"] < RUNWAY_RISK_MONTHS:
-        st.error(f"⏳ 현금 런웨이 {target_health['runway_months']:.1f}개월 — 단기 증자/희석 가능성 (PER과 무관한 생존 리스크)")
-    if isinstance(target_health["quick_ratio"], (int, float)) and target_health["quick_ratio"] < QUICK_RATIO_RISK:
-        st.error(f"💧 당좌비율 {target_health['quick_ratio']:.2f} — 단기 채무 대비 현금성자산 크게 부족")
-
-    st.subheader("정성적 근거 (뉴스·애널리스트)")
+    st.subheader("📰 정성적 근거 (뉴스·애널리스트)")
     st.caption("⚠️ 뉴스 톤은 키워드 매칭 기반 근사치입니다 (정밀 감성분석 아님, 원문 직접 확인 권장)")
 
     analyst_trend = st.session_state.analyst_trend
     if analyst_trend and analyst_trend["lean"] == opposite_tag:
-        st.error(
+        evidence(
             f"📊 애널리스트 의견({analyst_trend['period']}): 매수 {analyst_trend['strongBuy']+analyst_trend['buy']} / "
             f"중립 {analyst_trend['hold']} / 매도 {analyst_trend['strongSell']+analyst_trend['sell']} "
             f"— {'회의적' if opposite_tag=='bearish' else '긍정적'} 쪽으로 쏠림"
@@ -224,7 +281,9 @@ elif st.session_state.step == 2:
     opposite_news = [n for n in st.session_state.news_classified if n["lean"] == opposite_tag]
     if opposite_news:
         for n in opposite_news[:5]:
-            st.error(f"📰 {news_headline_link(n)} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
+            date_str = news_date_str(n)
+            date_part = f" ({date_str})" if date_str else ""
+            evidence(f"📰 {news_headline_link(n)}{date_part} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
     else:
         st.caption(f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 반대 관점 키워드 매칭 없음")
 
@@ -244,24 +303,39 @@ elif st.session_state.step == 3:
     intent = st.session_state.intent
     same_tag = "bullish" if intent == "매수 검토" else "bearish"
     st.header(f"3. {intent}를 지지하는 근거")
+    st.caption("색상으로 유불리를 표시하지 않습니다 — 아래는 모두 당신의 의도를 지지하는 근거입니다.")
 
+    st.subheader("🔧 기술적 근거")
     signals = st.session_state.signals
     same_signals = [s for s in signals if s[2] == same_tag]
     if not same_signals:
-        st.info("기술적 지표상 뚜렷한 지지 근거는 없습니다.")
+        st.caption("기술적 지표상 뚜렷한 지지 근거는 없습니다.")
     for name, desc, _ in same_signals:
-        st.success(f"**{name}** — {desc}")
+        evidence(f"**{name}** — {desc}")
 
     neutral_signals = [s for s in signals if s[2] == "neutral"]
     for name, desc, _ in neutral_signals:
         st.caption(f"(중립) {name} — {desc}")
 
-    st.subheader("정성적 근거 (뉴스·애널리스트)")
+    context_items = compute_flagged_context()
+    risk_items = [msg for msg, tag, cat in context_items if cat == "risk" and tag == same_tag]
+    if risk_items:
+        st.subheader("⚠️ 이벤트·유동성 근거")
+        for msg in risk_items:
+            evidence(msg)
+
+    valuation_items = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == same_tag]
+    if valuation_items:
+        st.subheader("💰 밸류에이션 근거")
+        for msg in valuation_items:
+            evidence(msg)
+
+    st.subheader("📰 정성적 근거 (뉴스·애널리스트)")
     st.caption("⚠️ 뉴스 톤은 키워드 매칭 기반 근사치입니다 (정밀 감성분석 아님, 원문 직접 확인 권장)")
 
     analyst_trend = st.session_state.analyst_trend
     if analyst_trend and analyst_trend["lean"] == same_tag:
-        st.success(
+        evidence(
             f"📊 애널리스트 의견({analyst_trend['period']}): 매수 {analyst_trend['strongBuy']+analyst_trend['buy']} / "
             f"중립 {analyst_trend['hold']} / 매도 {analyst_trend['strongSell']+analyst_trend['sell']} "
             f"— {'긍정적' if same_tag=='bullish' else '회의적'} 쪽으로 쏠림"
@@ -275,7 +349,9 @@ elif st.session_state.step == 3:
     same_news = [n for n in st.session_state.news_classified if n["lean"] == same_tag]
     if same_news:
         for n in same_news[:5]:
-            st.success(f"📰 {news_headline_link(n)} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
+            date_str = news_date_str(n)
+            date_part = f" ({date_str})" if date_str else ""
+            evidence(f"📰 {news_headline_link(n)}{date_part} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
     else:
         st.caption(f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 지지 관점 키워드 매칭 없음")
 
@@ -301,43 +377,51 @@ elif st.session_state.step == 4:
     st.caption("점수를 합산하지 않습니다. 서로 다른 카테고리가 다른 방향을 가리키는 지점만 나열합니다.")
 
     signals = st.session_state.signals
-    tech_bullish = [f"[기술] {name}: {desc}" for name, desc, tag in signals if tag == "bullish"]
-    tech_bearish = [f"[기술] {name}: {desc}" for name, desc, tag in signals if tag == "bearish"]
+    tech_bullish = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bullish"]
+    tech_bearish = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bearish"]
 
     analyst_trend = st.session_state.analyst_trend
     qual_bullish, qual_bearish = [], []
     if analyst_trend and analyst_trend["lean"] != "neutral":
-        line = (f"[정성] 애널리스트 의견({analyst_trend['period']}): 매수 "
+        line = (f"애널리스트 의견({analyst_trend['period']}): 매수 "
                 f"{analyst_trend['strongBuy']+analyst_trend['buy']} / 매도 "
                 f"{analyst_trend['strongSell']+analyst_trend['sell']}")
         (qual_bullish if analyst_trend["lean"] == "bullish" else qual_bearish).append(line)
 
     for n in st.session_state.news_classified:
+        date_str = news_date_str(n)
+        date_part = f" ({date_str})" if date_str else ""
+        line = f"뉴스: {news_headline_link(n)}{date_part}"
         if n["lean"] == "bullish":
-            qual_bullish.append(f"[정성] 뉴스: {news_headline_link(n)}")
+            qual_bullish.append(line)
         elif n["lean"] == "bearish":
-            qual_bearish.append(f"[정성] 뉴스: {news_headline_link(n)}")
+            qual_bearish.append(line)
 
-    bullish = tech_bullish + qual_bullish
-    bearish = tech_bearish + qual_bearish
+    def render_column(tech_lines, qual_lines):
+        st.markdown("**기술적 근거**")
+        if tech_lines:
+            for line in tech_lines:
+                st.markdown(f"- {line}")
+        else:
+            st.caption("없음")
+        st.markdown("**정성적 근거**")
+        if qual_lines:
+            for line in qual_lines:
+                st.markdown(f"- {line}")
+        else:
+            st.caption("없음")
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("🟢 긍정 방향")
-        for line in bullish:
-            st.write(f"- {line}")
-        if not bullish:
-            st.caption("없음")
+        render_column(tech_bullish, qual_bullish)
     with col2:
         st.subheader("🔴 회의적 방향")
-        for line in bearish:
-            st.write(f"- {line}")
-        if not bearish:
-            st.caption("없음")
+        render_column(tech_bearish, qual_bearish)
 
-    if bullish and bearish:
+    if (tech_bullish or qual_bullish) and (tech_bearish or qual_bearish):
         st.warning("⚠️ 기술적·정성적 근거 내에서도 방향이 엇갈립니다 — 아래 손절/익절에서 보수적으로 접근하는 것을 권장합니다.")
-    st.caption("점수를 합산하지 않고 [기술]/[정성] 태그만 붙여 병치합니다 (원칙 B).")
+    st.caption("점수를 합산하지 않고 기술적/정성적 근거를 나눠서 병치합니다 (원칙 B).")
 
     col1, col2 = st.columns([1, 5])
     with col1:
@@ -351,11 +435,25 @@ elif st.session_state.step == 4:
 # STEP 5: 자동 산출 + 확인 강제 (손절/익절)
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 5:
-    st.header("5. 손절가 / 익절가 (자동 산출)")
+    st.header("5. 손절가 / 익절가 (기술적 지표 반영)")
 
     ind = st.session_state.ind
-    entry = ind["close"]
-    st.metric("현재가 (진입가 가정)", f"${entry:.2f}")
+    info = st.session_state.info
+    live_price = info.get("currentPrice") or info.get("regularMarketPrice") or ind["close"]
+    st.metric("현재가", f"${live_price:.2f}")
+    st.caption("⚠️ 데이터 제공사 기준 시세이며, 최대 1시간 캐시됩니다 — 실제 체결가와 다를 수 있으니 매매 직전 브로커 화면에서 재확인하세요.")
+
+    if st.session_state.intent == "매수 검토":
+        entry = st.number_input(
+            "진입가 ($) — 실제로 매수하려는(또는 매수한) 가격을 입력하세요", value=round(float(live_price), 2), format="%.2f",
+        )
+    else:
+        entry = live_price
+        st.caption(
+            "매도 검토 = 신규 공매도가 아니라 '지금 보유 중인 포지션을 청산할지' 판단입니다. "
+            "아래 값은 새 진입가가 아니라 **오늘 팔지 않고 계속 들고 갈 경우** 기준으로, "
+            "손절가 아래로 빠지면 그때는 정리하고 익절가 위로 가면 목표 도달로 보는 기준선입니다."
+        )
 
     rt = compute_stop_take_profit(entry, ind)
 
@@ -385,17 +483,18 @@ elif st.session_state.step == 5:
             goto(4)
     with col2:
         if st.button("다음: 결정 이유 메모 →", type="primary", disabled=not rationale_confirmed):
+            st.session_state.entry_price = entry
             st.session_state.stop = stop
             st.session_state.take_profit = tp
             goto(6)
 
 # ----------------------------------------------------------------------------
-# STEP 6: 결정 이유 메모 (강제)
+# STEP 6: 결정 이유 메모 (선택)
 # ----------------------------------------------------------------------------
 elif st.session_state.step == 6:
     st.header("6. 이 결정을 내린 이유")
     memo = st.text_area(
-        "왜 지금 이 포지션을 검토하고 있나요? (한 줄 이상 필수)",
+        "왜 지금 이 포지션을 검토하고 있나요? (선택 입력)",
         value=st.session_state.get("memo", ""), height=120,
     )
     col1, col2 = st.columns([1, 5])
@@ -403,7 +502,7 @@ elif st.session_state.step == 6:
         if st.button("← 이전 단계로"):
             goto(5)
     with col2:
-        if st.button("다음: 최종 확인 →", type="primary", disabled=not memo.strip()):
+        if st.button("다음: 최종 확인 →", type="primary"):
             st.session_state.memo = memo.strip()
             goto(7)
 
@@ -416,7 +515,7 @@ elif st.session_state.step == 7:
     c1, c2 = st.columns(2)
     c1.metric("손절가", f"${st.session_state.stop:.2f}")
     c2.metric("보수적 익절가 (50%)", f"${st.session_state.take_profit:.2f}")
-    st.write(f"**결정 이유 메모:** {st.session_state.memo}")
+    st.write(f"**결정 이유 메모:** {st.session_state.memo or '(작성 안 함)'}")
     st.info("나머지 50% 물량은 추격손절로 트레일링, 목표가 없음.")
 
     col1, col2, col3 = st.columns([1, 2, 2])
@@ -427,7 +526,7 @@ elif st.session_state.step == 7:
         if st.button("✅ 그대로 진행 (기록)", type="primary"):
             append_entry({
                 "ticker": st.session_state.ticker, "intent": st.session_state.intent,
-                "entry_price": st.session_state.ind["close"], "stop": st.session_state.stop,
+                "entry_price": st.session_state.entry_price, "stop": st.session_state.stop,
                 "take_profit": st.session_state.take_profit, "memo": st.session_state.memo,
             })
             goto(8)

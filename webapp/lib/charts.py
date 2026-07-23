@@ -6,9 +6,23 @@ from plotly.subplots import make_subplots
 
 PERIOD_OPTIONS = {"1개월": 21, "3개월": 63, "6개월": 126, "1년": 252, "전체": None}
 
+# Yahoo Finance 분봉 제약: interval별 조회 가능한 최대 기간이 다름 (1m→7일, 5m/15m/30m→60일,
+# 60m→2년 정도). "3분"은 Yahoo가 지원하지 않아 가장 가까운 5분으로 대체.
+INTRADAY_OPTIONS = {
+    "1분": ("1m", "5d"),
+    "5분": ("5m", "1mo"),
+    "15분": ("15m", "1mo"),
+    "30분": ("30m", "3mo"),
+    "1시간": ("60m", "6mo"),
+}
+
 # 한국 관행: 상승(종가>=시가)은 빨강, 하락은 파랑
 _UP_COLOR = "#e74c3c"
 _DOWN_COLOR = "#3498db"
+
+# 타 증권사 앱처럼 클릭+드래그로 차트를 이동(pan)할 수 있게 — 기본값(zoom 박스선택) 대신.
+# scrollZoom은 마우스 휠로 확대/축소, displaylogo는 plotly 로고 제거.
+PLOTLY_CONFIG = {"scrollZoom": True, "displaylogo": False}
 
 
 def render_price_chart_figure(df, period_days=None):
@@ -52,5 +66,6 @@ def render_price_chart_figure(df, period_days=None):
         margin=dict(l=10, r=10, t=10, b=10),
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        dragmode="pan",
     )
     return fig

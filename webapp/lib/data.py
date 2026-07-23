@@ -34,6 +34,20 @@ def get_price_history(ticker, start="2024-01-01"):
     return fdr.DataReader(ticker, start)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_intraday_price_history(ticker, interval, period):
+    """분봉 데이터 — Yahoo Finance 제약상 interval별로 조회 가능한 최대 period가 다름
+    (1m: 최근 7일, 5m/15m/30m: 최근 60일, 60m: 최근 2년 등). 5분 캐시로 너무 잦은
+    재호출은 막되, 장중 갱신을 위해 일봉보다 짧게 잡음."""
+    try:
+        df = yf.Ticker(ticker).history(period=period, interval=interval)
+        if df is None or df.empty:
+            return None
+        return df
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_yf_info(ticker):
     try:
@@ -132,6 +146,26 @@ def get_finnhub_company_news(ticker, from_date, to_date):
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_option_expirations(ticker):
+    """만기일 목록 (YYYY-MM-DD 문자열). yfinance는 '현재 시점' 옵션 체인만 제공 —
+    과거 추이가 아니라 앞으로 도래할 만기들의 지금 상태만 볼 수 있음."""
+    try:
+        return list(yf.Ticker(ticker).options)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_option_chain(ticker, expiration):
+    """특정 만기일의 콜/풋 옵션 체인 (행사가별 미결제약정·거래량·IV)."""
+    try:
+        oc = yf.Ticker(ticker).option_chain(expiration)
+        return oc.calls, oc.puts
+    except Exception:
+        return None, None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
