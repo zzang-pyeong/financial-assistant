@@ -25,14 +25,19 @@ st.divider()
 
 list_col, chart_col = st.columns([1, 5])
 
+
 def _clear_intraday_choice():
     st.session_state.chart_intraday_choice = None
+
+
+def _clear_daily_choice():
+    st.session_state.chart_daily_choice = None
 
 
 with list_col:
     st.markdown("**일봉**")
     daily_choice = st.radio(
-        "일봉 기간", list(PERIOD_OPTIONS.keys()), index=2, key="chart_daily_choice", label_visibility="collapsed",
+        "일봉 기간", list(PERIOD_OPTIONS.keys()), index=None, key="chart_daily_choice", label_visibility="collapsed",
         on_change=_clear_intraday_choice,
     )
     st.markdown("**분봉**")
@@ -40,6 +45,7 @@ with list_col:
     intraday_choice = st.radio(
         "분봉 단위", list(INTRADAY_OPTIONS.keys()), index=None, key="chart_intraday_choice",
         label_visibility="collapsed",
+        on_change=_clear_daily_choice,
     )
     st.caption("마우스 드래그로 좌우 이동, 스크롤로 확대/축소할 수 있습니다.")
 
@@ -57,5 +63,7 @@ with chart_col:
             fig = render_price_chart_figure(intraday_df, period_days=None)
             st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     else:
-        fig = render_price_chart_figure(st.session_state.df, PERIOD_OPTIONS[daily_choice])
+        # 일봉도 분봉도 선택 안 된 초기 상태 대비 — 기본값 6개월로 폴백
+        period_key = daily_choice or "6개월"
+        fig = render_price_chart_figure(st.session_state.df, PERIOD_OPTIONS[period_key])
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
