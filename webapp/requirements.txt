@@ -1,9 +1,11 @@
 streamlit
+packaging
 finance-datareader
 yfinance
 requests
 python-dotenv
 pandas
+python-dateutil
 numpy
 deep-translator
 plotly

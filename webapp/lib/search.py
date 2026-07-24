@@ -11,14 +11,29 @@ from lib.data import (
 from lib.indicators import compute_indicators, classify_indicator_signals
 from lib.peers import classify_peers, get_financial_health
 from lib.ownership import (
-    get_ownership_summary, get_fund_level_active_passive,
-    get_recent_insider_transactions,
+    get_ownership_summary,
 )
 from lib.qualitative import (
     classify_news_tone, news_tone_summary, classify_analyst_trend,
-    filter_analyst_related_news, filter_corporate_event_news,
+    filter_analyst_related_news, filter_corporate_event_news, match_counterparties,
 )
 from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
+from lib.known_companies import STATIC_KNOWN_COMPANIES
+
+MAX_SEARCH_HISTORY = 30
+
+
+def _remember_search(ticker, name):
+    """검색 이력에 (ticker, name) 추가 — 관계도(마인드맵) 매칭용 '이미 아는 회사' 사전을
+    peer 리스트 밖으로 넓히는 용도(예: 다른 산업의 공급망 파트너). 중복 티커는 재추가하지
+    않고, 최근 MAX_SEARCH_HISTORY개만 보관. CSV 등으로 영속화하지 않음 — Streamlit Cloud는
+    배포 프로세스를 여러 브라우저 세션이 공유하므로, 공유 파일에 쌓으면 다른 사용자의 검색
+    이력이 내 관계도 매칭에 섞여 들어올 수 있어(session_state는 세션별로 격리되어 안전)."""
+    history = st.session_state.get("search_history", [])
+    if not any(h["ticker"].upper() == ticker.upper() for h in history):
+        history.append({"ticker": ticker, "name": name})
+        history = history[-MAX_SEARCH_HISTORY:]
+    st.session_state.search_history = history
 
 
 def fetch_and_store_ticker(raw_input):
@@ -45,6 +60,7 @@ def fetch_and_store_ticker(raw_input):
             ind = compute_indicators(df)
             info = get_yf_info(ticker)
             earnings_date = get_yf_calendar(ticker)
+
             qqq_df = get_price_history("QQQ", "2023-01-01")
             qqq_ma200 = qqq_df["Close"].rolling(200).mean().iloc[-1]
             qqq_price = qqq_df["Close"].iloc[-1]
@@ -53,44 +69,64 @@ def fetch_and_store_ticker(raw_input):
             peer_data = classify_peers(ticker)
             target_health = get_financial_health(ticker)
             ownership = get_ownership_summary(ticker)
-            fund_ap = get_fund_level_active_passive(ticker)
-            insider_tx = get_recent_insider_transactions(ticker)
 
             signals = classify_indicator_signals(ind)
 
             # 정성적 근거: 뉴스 톤(키워드 근사치) + 애널리스트 투자의견
             # 관련성 게이트를 위해 기업명 전달 — 종목과 무관한 기사를 걸러냄
             company_name = info.get("longName") or info.get("shortName") or ticker
-            today_str = date.today().isoformat()
-            from_str = (date.today() - timedelta(days=NEWS_LOOKBACK_DAYS)).isoformat()
-            raw_news = get_finnhub_company_news(ticker, from_str, today_str)
-            news_classified = classify_news_tone(raw_news, ticker, company_name)
+            today = date.today()
+            today_str = today.isoformat()
+            # 56일 뉴스 톤과 60일 상세 뉴스가 같은 API를 두 번 호출하던 것을 하나로 통합.
+            wide_from_str = (today - timedelta(days=ANALYST_NEWS_LOOKBACK_DAYS)).isoformat()
+            wide_news = get_finnhub_company_news(ticker, wide_from_str, today_str)
+            recent_cutoff = (today - timedelta(days=NEWS_LOOKBACK_DAYS)).isoformat()
+            recent_news = [n for n in wide_news if n.get("datetime") and
+                           date.fromtimestamp(n["datetime"]).isoformat() >= recent_cutoff]
+            news_classified = classify_news_tone(recent_news, ticker, company_name)
             news_summary = news_tone_summary(news_classified)
 
             rec_trends = get_finnhub_recommendation_trends(ticker)
             analyst_trend = classify_analyst_trend(rec_trends)
 
-            # 애널리스트/기업이벤트 관련 뉴스 — 더 넓은 기간에서 근사 필터링
-            wide_from_str = (date.today() - timedelta(days=ANALYST_NEWS_LOOKBACK_DAYS)).isoformat()
-            wide_news = get_finnhub_company_news(ticker, wide_from_str, today_str)
+            # 애널리스트/기업이벤트 관련 뉴스도 위에서 받은 60일 데이터를 재사용.
             analyst_news = filter_analyst_related_news(wide_news, ticker, company_name)
             corporate_events = filter_corporate_event_news(wide_news, ticker, company_name)
+
+            # 관계도(마인드맵) — "이미 아는 회사"만 상대방으로 인식: 정적 대형주 목록(최하위
+            # 우선순위, 커버리지 확장용) < peer 리스트 < 세션 검색 이력(최우선, 가장 최신 확인).
+            # peer만으론 경쟁사만 잡혀서 TSMC/MSFT/IREN 같은 실제 거래상대방을 놓치는 걸
+            # 실증으로 확인해 정적 목록을 추가함(lib/known_companies.py 참조).
+            _remember_search(ticker, company_name)
+            known_companies = {kc["ticker"].upper(): kc for kc in STATIC_KNOWN_COMPANIES}
+            for p in peer_data["peers"]:
+                if p.get("name"):
+                    known_companies[p["ticker"].upper()] = {"ticker": p["ticker"], "name": p["name"]}
+            for h in st.session_state.search_history:
+                known_companies[h["ticker"].upper()] = h
+            relationship_edges = match_counterparties(
+                corporate_events, list(known_companies.values()), exclude_ticker=ticker,
+            )
         except Exception as e:
             st.error(f"데이터 수집 중 오류: {e}")
             return False
 
     # 새 종목 검색 — 이전 종목의 포지션 의도·메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
-    for k in ("intent", "memo", "stop", "take_profit", "entry_price"):
+    for k in (
+        "intent", "memo", "stop", "take_profit", "entry_price",
+        "fund_ap", "insider_tx", "ownership_details_ticker",
+    ):
         st.session_state.pop(k, None)
 
     st.session_state.update(
         ticker=ticker,
         df=df, ind=ind, info=info, earnings_date=earnings_date,
         qqq_price=qqq_price, qqq_ma200=qqq_ma200, regime_favorable=regime_favorable,
-        peer_data=peer_data, target_health=target_health, ownership=ownership, fund_ap=fund_ap,
-        insider_tx=insider_tx, signals=signals,
+        peer_data=peer_data, target_health=target_health, ownership=ownership,
+        signals=signals,
         news_classified=news_classified, news_summary=news_summary,
         analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
+        relationship_edges=relationship_edges,
     )
     if matched_name:
         st.toast(f"'{raw_input}' → {ticker} ({matched_name})")
@@ -132,6 +168,7 @@ _SIDEBAR_PAGES = [
     ("pages/5_애널리스트_뉴스.py", "Analyst News", "📰"),
     ("pages/6_기업_이벤트_뉴스.py", "Company Events", "🏢"),
     ("pages/7_옵션_데이터.py", "Options Data", "🧮"),
+    ("pages/8_관계도.py", "Relationship Map", "🕸️"),
 ]
 
 

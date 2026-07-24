@@ -1,0 +1,123 @@
+"""관계도(Relationship Map)용 정적 대형주 사전.
+
+peer 리스트(경쟁사만 모아줌)와 세션 검색 이력만으로는 실제 거래상대방(파운드리·고객사·
+공급사 등)을 거의 못 잡는다는 게 실증으로 확인됨(예: NVDA-TSMC/MSFT/IREN 등은 peer도
+아니고 검색 이력에도 없어서 관계도에서 누락됨). 개체명인식(NER)/유료 API 없이 무료로
+커버리지를 넓히는 가장 싼 방법 — 자주 언급되는 나스닥/뉴욕 대형주 티커·기업명을 하드코딩.
+
+⚠️ 살아있는 데이터가 아니라 특정 시점 스냅샷(작성 시점 기준)이다. 상장폐지·사명변경·
+신규 대형주 편입 등으로 시간이 지나면 어긋날 수 있음 — 주기적으로 손으로 갱신 필요.
+"""
+
+STATIC_KNOWN_COMPANIES = [
+    # 메가캡 빅테크
+    {"ticker": "AAPL", "name": "Apple Inc."},
+    {"ticker": "MSFT", "name": "Microsoft Corporation"},
+    {"ticker": "GOOGL", "name": "Alphabet Inc."},
+    {"ticker": "GOOG", "name": "Alphabet Inc."},
+    {"ticker": "AMZN", "name": "Amazon.com, Inc."},
+    {"ticker": "META", "name": "Meta Platforms, Inc."},
+    {"ticker": "TSLA", "name": "Tesla, Inc."},
+
+    # 반도체 설계/제조/장비
+    {"ticker": "INTC", "name": "Intel Corporation"},
+    {"ticker": "AMD", "name": "Advanced Micro Devices, Inc."},
+    {"ticker": "QCOM", "name": "QUALCOMM Incorporated"},
+    {"ticker": "TXN", "name": "Texas Instruments Incorporated"},
+    {"ticker": "AVGO", "name": "Broadcom Inc."},
+    {"ticker": "AMAT", "name": "Applied Materials, Inc."},
+    {"ticker": "LRCX", "name": "Lam Research Corporation"},
+    {"ticker": "KLAC", "name": "KLA Corporation"},
+    {"ticker": "MU", "name": "Micron Technology, Inc."},
+    {"ticker": "ADI", "name": "Analog Devices, Inc."},
+    {"ticker": "MRVL", "name": "Marvell Technology, Inc."},
+    {"ticker": "NXPI", "name": "NXP Semiconductors N.V."},
+    {"ticker": "MCHP", "name": "Microchip Technology Incorporated"},
+    {"ticker": "ON", "name": "ON Semiconductor Corporation"},
+    {"ticker": "SWKS", "name": "Skyworks Solutions, Inc."},
+    {"ticker": "QRVO", "name": "Qorvo, Inc."},
+    {"ticker": "MPWR", "name": "Monolithic Power Systems, Inc."},
+    {"ticker": "WOLF", "name": "Wolfspeed, Inc."},
+    {"ticker": "AMKR", "name": "Amkor Technology, Inc."},
+    {"ticker": "ASML", "name": "ASML Holding N.V."},
+    {"ticker": "TSM", "name": "Taiwan Semiconductor Manufacturing Company Limited"},
+    {"ticker": "UMC", "name": "United Microelectronics Corporation"},
+    {"ticker": "GFS", "name": "GlobalFoundries Inc."},
+    {"ticker": "STM", "name": "STMicroelectronics N.V."},
+    {"ticker": "ARM", "name": "Arm Holdings plc"},
+    {"ticker": "CDNS", "name": "Cadence Design Systems, Inc."},
+    {"ticker": "SNPS", "name": "Synopsys, Inc."},
+    {"ticker": "ANSS", "name": "Ansys, Inc."},
+    {"ticker": "CRUS", "name": "Cirrus Logic, Inc."},
+    {"ticker": "SLAB", "name": "Silicon Laboratories Inc."},
+    {"ticker": "DIOD", "name": "Diodes Incorporated"},
+    {"ticker": "POWI", "name": "Power Integrations, Inc."},
+    {"ticker": "LSCC", "name": "Lattice Semiconductor Corporation"},
+    {"ticker": "RMBS", "name": "Rambus Inc."},
+    {"ticker": "SYNA", "name": "Synaptics Incorporated"},
+    {"ticker": "COHR", "name": "Coherent Corp."},
+    {"ticker": "IPGP", "name": "IPG Photonics Corporation"},
+    {"ticker": "KEYS", "name": "Keysight Technologies, Inc."},
+    {"ticker": "TER", "name": "Teradyne, Inc."},
+    {"ticker": "ENTG", "name": "Entegris, Inc."},
+
+    # 하드웨어/스토리지/네트워킹
+    {"ticker": "CSCO", "name": "Cisco Systems, Inc."},
+    {"ticker": "IBM", "name": "International Business Machines Corporation"},
+    {"ticker": "WDC", "name": "Western Digital Corporation"},
+    {"ticker": "STX", "name": "Seagate Technology Holdings plc"},
+    {"ticker": "JBL", "name": "Jabil Inc."},
+    {"ticker": "FLEX", "name": "Flex Ltd."},
+    {"ticker": "CLS", "name": "Celestica Inc."},
+    {"ticker": "HPQ", "name": "HP Inc."},
+    {"ticker": "DELL", "name": "Dell Technologies Inc."},
+    {"ticker": "HPE", "name": "Hewlett Packard Enterprise Company"},
+    {"ticker": "SMCI", "name": "Super Micro Computer, Inc."},
+    {"ticker": "ANET", "name": "Arista Networks, Inc."},
+    {"ticker": "JNPR", "name": "Juniper Networks, Inc."},
+    {"ticker": "CIEN", "name": "Ciena Corporation"},
+    {"ticker": "FFIV", "name": "F5, Inc."},
+    {"ticker": "NTAP", "name": "NetApp, Inc."},
+    {"ticker": "PSTG", "name": "Pure Storage, Inc."},
+    {"ticker": "VRT", "name": "Vertiv Holdings Co"},
+
+    # 산업/커넥터(데이터센터·전력 인프라 공급망에서 자주 언급됨)
+    {"ticker": "ETN", "name": "Eaton Corporation plc"},
+    {"ticker": "EMR", "name": "Emerson Electric Co."},
+    {"ticker": "HON", "name": "Honeywell International Inc."},
+    {"ticker": "TEL", "name": "TE Connectivity Ltd"},
+    {"ticker": "APH", "name": "Amphenol Corporation"},
+    {"ticker": "GLW", "name": "Corning Incorporated"},
+
+    # 소프트웨어/클라우드/AI
+    {"ticker": "ORCL", "name": "Oracle Corporation"},
+    {"ticker": "CRM", "name": "Salesforce, Inc."},
+    {"ticker": "ADBE", "name": "Adobe Inc."},
+    {"ticker": "NFLX", "name": "Netflix, Inc."},
+    {"ticker": "NOW", "name": "ServiceNow, Inc."},
+    {"ticker": "WDAY", "name": "Workday, Inc."},
+    {"ticker": "SNOW", "name": "Snowflake Inc."},
+    {"ticker": "PLTR", "name": "Palantir Technologies Inc."},
+    {"ticker": "PANW", "name": "Palo Alto Networks, Inc."},
+    {"ticker": "FTNT", "name": "Fortinet, Inc."},
+    {"ticker": "CRWD", "name": "CrowdStrike Holdings, Inc."},
+    {"ticker": "ZS", "name": "Zscaler, Inc."},
+    {"ticker": "NET", "name": "Cloudflare, Inc."},
+    {"ticker": "DDOG", "name": "Datadog, Inc."},
+    {"ticker": "MDB", "name": "MongoDB, Inc."},
+    {"ticker": "TEAM", "name": "Atlassian Corporation"},
+    {"ticker": "SHOP", "name": "Shopify Inc."},
+    {"ticker": "UBER", "name": "Uber Technologies, Inc."},
+    {"ticker": "ABNB", "name": "Airbnb, Inc."},
+    {"ticker": "PYPL", "name": "PayPal Holdings, Inc."},
+    {"ticker": "COIN", "name": "Coinbase Global, Inc."},
+    {"ticker": "SPOT", "name": "Spotify Technology S.A."},
+    {"ticker": "RBLX", "name": "Roblox Corporation"},
+    {"ticker": "DASH", "name": "DoorDash, Inc."},
+    {"ticker": "CVNA", "name": "Carvana Co."},
+    {"ticker": "AI", "name": "C3.ai, Inc."},
+
+    # AI 클라우드/데이터센터 신흥주
+    {"ticker": "CRWV", "name": "CoreWeave, Inc."},
+    {"ticker": "IREN", "name": "IREN Limited"},
+]

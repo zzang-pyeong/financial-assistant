@@ -6,7 +6,10 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.ownership import insider_trade_direction, float_ratio_interpretation, institution_pct_interpretation
+from lib.ownership import (
+    get_fund_level_active_passive, get_recent_insider_transactions,
+    insider_trade_direction, float_ratio_interpretation, institution_pct_interpretation,
+)
 from lib.glossary import render_glossary
 from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
 from lib.search import render_sidebar
@@ -25,8 +28,18 @@ st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 own = st.session_state.ownership
-fund_ap_preview = st.session_state.fund_ap
-insider_tx_preview = st.session_state.insider_tx
+# 펀드 보유·내부자 거래는 Conflict Board에서 쓰지 않는 비용 큰 요청이므로 이 페이지에서만 로드.
+if st.session_state.get("ownership_details_ticker") != ticker:
+    with st.spinner("펀드 보유·내부자 거래를 불러오는 중..."):
+        fund_ap, insider_tx = get_fund_level_active_passive(ticker), get_recent_insider_transactions(ticker)
+    st.session_state.update(
+        fund_ap=fund_ap,
+        insider_tx=insider_tx,
+        ownership_details_ticker=ticker,
+    )
+
+fund_ap_preview = st.session_state.get("fund_ap")
+insider_tx_preview = st.session_state.get("insider_tx")
 direction_preview = insider_trade_direction(insider_tx_preview)
 
 summary_rows = []
@@ -81,14 +94,14 @@ if own["float_ratio"] is not None:
     st.write(f"유동주식비율: **{own['float_ratio']*100:.1f}%**")
     st.caption(float_ratio_interpretation(own["float_ratio"]))
 
-fund_ap = st.session_state.fund_ap
+fund_ap = st.session_state.get("fund_ap")
 if fund_ap:
     total = fund_ap["passive_pct"] + fund_ap["active_pct"]
     if total > 0:
         st.write(f"펀드 단위 Passive:Active = **{fund_ap['passive_pct']/total*100:.0f}% : {fund_ap['active_pct']/total*100:.0f}%**")
         st.caption("(펀드명 키워드 매칭 기준, 참고용)")
 
-insider_tx = st.session_state.insider_tx
+insider_tx = st.session_state.get("insider_tx")
 direction = insider_trade_direction(insider_tx)
 if direction:
     st.write(f"내부자 매매 방향성: **{direction['direction']}**")

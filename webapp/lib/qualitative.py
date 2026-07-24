@@ -52,6 +52,15 @@ _NAME_SUFFIXES = {
     "inc", "incorporated", "corp", "corporation", "co", "ltd", "limited", "plc",
     "holdings", "holding", "group", "the", "class", "common", "stock", "company",
     "sa", "nv", "ag", "llc", "lp", "trust",
+    # 업종을 나타내는 일반 단어 — 이것만 남으면 사실상 아무 회사에나 걸리는 약한 단서라 제외.
+    # 관계도(match_counterparties)가 후보 회사 수를 크게 늘리면서 실제로 겪은 문제(예:
+    # "ON Semiconductor"/"TE Connectivity"가 접미사만 떼면 "semiconductor"/"connectivity"
+    # 같은 흔한 단어 하나만 남아 아무 반도체 기사에나 오매칭될 뻔함) — 이 단어들을 제거해도
+    # 남는 토큰이 없으면 그 회사는 이름 매칭에서 제외되고 티커 매칭에만 의존하게 됨(안전한 방향).
+    "semiconductor", "semiconductors", "connectivity", "technology", "technologies",
+    "systems", "solutions", "networks", "networking", "electronics", "electric",
+    "industries", "international", "global", "worldwide", "enterprises", "software",
+    "communications", "sciences", "labs", "laboratories",
 }
 
 
@@ -208,6 +217,115 @@ def filter_corporate_event_news(news_list, ticker=None, company_name=None):
                 "categories": matched_categories,
             })
     return results
+
+
+# 관계도(마인드맵)용 — 경영진 교체는 "관계"가 아니라서 제외, M&A/신규계약만 엣지로 취급
+_RELATIONSHIP_CATEGORIES = {"인수합병(M&A)", "신규 계약/파트너십"}
+
+# "신규 계약/파트너십" 버킷 안에서 매칭된 키워드로 유형을 더 쪼갬(새 데이터 없이 무료로 가능).
+# 원본 CORPORATE_EVENT_KEYWORDS는 그대로 두고(기존 뉴스 목록 화면 영향 없음), 관계도 전용으로만 세분화.
+_PARTNERSHIP_SUBTYPE_KEYWORDS = {
+    "공급 계약": ["supply agreement"],
+    "합작투자": ["joint venture"],
+    "라이선싱": ["licensing deal"],
+}
+
+# 관계 진행 상태 근사 판정 — 철회 > 발표·추진 > 체결/진행 순 우선순위(둘 다 매칭되면 철회 우선).
+_STATUS_TERMINATED_KEYWORDS = [
+    "terminates", "terminated", "termination", "walks away", "calls off",
+    "called off", "abandons", "abandoned", "scraps deal", "scrapped",
+    "collapses", "falls through", "withdraws", "withdrawn", "backs out",
+]
+_STATUS_ANNOUNCED_KEYWORDS = [
+    "to acquire", "plans to acquire", "to merge", "considering acquisition",
+    "in talks to acquire", "in talks to merge", "exploring acquisition",
+]
+
+
+def _relationship_type_label(category, matched_in_category):
+    """카테고리+매칭 키워드로 관계 유형을 더 구체적으로 라벨링. "신규 계약/파트너십"만
+    공급 계약/합작투자/라이선싱으로 세분화 시도하고, 못 찾으면 "전략적 제휴"로 남긴다."""
+    if category != "신규 계약/파트너십":
+        return category
+    matched_lower = [k.lower() for k in matched_in_category]
+    for label, kws in _PARTNERSHIP_SUBTYPE_KEYWORDS.items():
+        if any(kw in matched_lower for kw in kws):
+            return label
+    return "전략적 제휴"
+
+
+def _classify_relationship_status(headline):
+    """관계 진행 상태를 헤드라인 키워드로 근사 판정.
+    ⚠️ 문구만 보는 근사치 — 실제 계약 이행/무산 여부를 공식 확인하는 것은 아님."""
+    if _matched_keywords(headline, _STATUS_TERMINATED_KEYWORDS):
+        return "철회·무산"
+    if _matched_keywords(headline, _STATUS_ANNOUNCED_KEYWORDS):
+        return "발표·추진"
+    return "체결·진행"
+
+
+def match_counterparties(corporate_events, known_companies, exclude_ticker=None):
+    """corporate_events(filter_corporate_event_news 결과)의 M&A/신규계약 카테고리 헤드라인에서,
+    known_companies(peer 리스트 + 검색 이력, [{"ticker":, "name":}, ...]) 중 단어경계로
+    등장하는 회사마다 엣지를 하나씩 반환한다. 정밀 개체명인식이 아니라, "이미 아는 회사"만
+    찾는 근사치.
+    ⚠️ is_relevant()의 단일-토큰 매칭(ANY)을 그대로 재사용하면 안 됨 — 실증 확인: "Micron
+    Technology"/"Marvell Technology"의 "technology", "Advanced Micro Devices"의 "advanced"처럼
+    흔한 단어 하나가 겹치는 것만으로 전혀 무관한 회사가 매칭돼버림(Amkor의 "Advanced Packaging"
+    문구 때문에 AMD/Micron/Marvell이 오매칭된 실제 사례). 그래서 회사명의 토큰 전부(ALL)가
+    헤드라인에 등장해야만 매칭으로 인정 — 회사 자신에 대한 단일 종목 관련성 판정(is_relevant)과
+    달리, 다수 후보 회사를 동시에 대조하는 이 함수는 일반 단어 하나로 오탐할 위험이 훨씬 커서
+    더 보수적인 기준이 필요하다.
+    이름 매칭과 별개로, 헤드라인에 티커 심볼이 대문자 그대로 단어경계로 등장하면(예: "(NVDA)")도
+    매칭으로 인정한다 — 실제 헤드라인은 정식 회사명보다 티커/브랜드 약칭을 훨씬 자주 쓰기 때문
+    (원본 대소문자 그대로 비교, 3자 미만 티커는 "ON"/"U"처럼 흔한 단어와 겹쳐 제외).
+    한 헤드라인이 여러 회사와 매칭되면(다자간 계약 등) 회사마다 별도 엣지를 만든다 —
+    스킵하면 실제 관계를 그래프에서 누락시키기 때문.
+    각 엣지에 relationship_type(세분화된 유형)/status(진행상태)/evidence_level(근거 수준,
+    지금은 전부 뉴스 기반이라 상수)을 붙여 반환 — 전부 새 API 호출 없이 기존 헤드라인
+    텍스트만 다시 훑어서 계산."""
+    exclude_ticker = (exclude_ticker or "").upper()
+    candidates = []
+    for kc in known_companies:
+        t = (kc.get("ticker") or "").upper()
+        if not t or t == exclude_ticker:
+            continue
+        tokens = _company_tokens(kc.get("name"))
+        candidates.append((kc["ticker"], kc.get("name"), tokens))
+
+    edges = []
+    for ev in corporate_events:
+        matching_cats = [c for c in ev["categories"] if c["category"] in _RELATIONSHIP_CATEGORIES]
+        if not matching_cats:
+            continue
+        raw_headline = ev.get("headline") or ""
+        headline = raw_headline.lower()
+        type_labels = []
+        for c in matching_cats:
+            label = _relationship_type_label(c["category"], c["matched"])
+            if label not in type_labels:
+                type_labels.append(label)
+        relationship_type = ", ".join(type_labels)
+        status = _classify_relationship_status(headline)
+        for cp_ticker, cp_name, tokens in candidates:
+            name_match = bool(tokens) and all(
+                re.search(r"\b" + re.escape(tok) + r"\b", headline) for tok in tokens
+            )
+            ticker_match = len(cp_ticker) >= 3 and re.search(
+                r"\b" + re.escape(cp_ticker) + r"\b", raw_headline
+            )
+            if name_match or ticker_match:
+                edges.append({
+                    "counterparty_ticker": cp_ticker,
+                    "counterparty_name": cp_name,
+                    "relationship_type": relationship_type,
+                    "status": status,
+                    "evidence_level": "뉴스 보도 기반 (공식 확인 아님)",
+                    "headline": ev.get("headline"),
+                    "url": ev.get("url"),
+                    "datetime": ev.get("datetime"),
+                })
+    return edges
 
 
 def classify_analyst_trend(rec_trends):
