@@ -1,7 +1,6 @@
 from .data import (
     get_yf_info,
     get_mutualfund_holders,
-    get_institutional_holders,
     get_insider_transactions,
 )
 
@@ -10,27 +9,12 @@ PASSIVE_KEYWORDS = [
     "total market", "extended market", "total stock market",
 ]
 
-# 부록 8.3 — 법인 단위(institutional_holders)는 키워드가 안 통해 수동 매핑 필요
-KNOWN_FIRM_TYPES = {
-    "blackrock inc.": "혼합(패시브 비중 큼)",
-    "state street corporation": "혼합(패시브 비중 큼)",
-    "geode capital management, llc": "혼합(패시브 비중 큼)",
-    "the vanguard group, inc.": "혼합(패시브 비중 큼)",
-    "alyeska investment group, l.p.": "액티브(헤지펀드)",
-    "price (t.rowe) associates inc": "액티브",
-    "hood river capital management llc": "액티브(스몰캡 전문)",
-}
-
 
 def classify_fund_name(name):
     name_l = (name or "").lower()
     if any(kw in name_l for kw in PASSIVE_KEYWORDS):
         return "Passive"
     return "Active(추정)"
-
-
-def classify_firm_name(name):
-    return KNOWN_FIRM_TYPES.get((name or "").strip().lower(), "확인 필요(법인 단위, 키워드 무효)")
 
 
 def get_ownership_summary(ticker):
@@ -62,15 +46,6 @@ def get_fund_level_active_passive(ticker):
         "active_pct": active_sum,
         "passive_ratio": (passive_sum / total) if total > 0 else None,
     }
-
-
-def get_firm_level_holders(ticker):
-    ih = get_institutional_holders(ticker)
-    if ih is None or ih.empty:
-        return None
-    ih = ih.copy()
-    ih["Type"] = ih["Holder"].apply(classify_firm_name)
-    return ih
 
 
 def get_recent_insider_transactions(ticker):

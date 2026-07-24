@@ -11,7 +11,7 @@ from lib.data import (
 from lib.indicators import compute_indicators, classify_indicator_signals
 from lib.peers import classify_peers, get_financial_health
 from lib.ownership import (
-    get_ownership_summary, get_fund_level_active_passive, get_firm_level_holders,
+    get_ownership_summary, get_fund_level_active_passive,
     get_recent_insider_transactions,
 )
 from lib.qualitative import (
@@ -36,6 +36,12 @@ def fetch_and_store_ticker(raw_input):
             if df is None or df.empty:
                 st.error("가격 데이터를 가져오지 못했습니다. 티커/기업명을 확인해주세요.")
                 return False
+            # MA60/60일 전고점 등 최대 60거래일 롤링 지표가 있어, 이보다 적으면
+            # 지표가 NaN이 되어 손절/익절 계산이 깨짐 — 최근 상장 등으로 이력이
+            # 짧은 종목은 여기서 미리 막고 안내한다.
+            if len(df) < 60:
+                st.error("가격 이력이 너무 짧아(최근 상장 등) 기술적 지표를 계산할 수 없습니다.")
+                return False
             ind = compute_indicators(df)
             info = get_yf_info(ticker)
             earnings_date = get_yf_calendar(ticker)
@@ -48,7 +54,6 @@ def fetch_and_store_ticker(raw_input):
             target_health = get_financial_health(ticker)
             ownership = get_ownership_summary(ticker)
             fund_ap = get_fund_level_active_passive(ticker)
-            firm_holders = get_firm_level_holders(ticker)
             insider_tx = get_recent_insider_transactions(ticker)
 
             signals = classify_indicator_signals(ind)
@@ -83,7 +88,7 @@ def fetch_and_store_ticker(raw_input):
         df=df, ind=ind, info=info, earnings_date=earnings_date,
         qqq_price=qqq_price, qqq_ma200=qqq_ma200, regime_favorable=regime_favorable,
         peer_data=peer_data, target_health=target_health, ownership=ownership, fund_ap=fund_ap,
-        firm_holders=firm_holders, insider_tx=insider_tx, signals=signals,
+        insider_tx=insider_tx, signals=signals,
         news_classified=news_classified, news_summary=news_summary,
         analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
     )

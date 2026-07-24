@@ -75,15 +75,6 @@ def get_yf_calendar(ticker):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_institutional_holders(ticker):
-    try:
-        df = yf.Ticker(ticker).institutional_holders
-        return df
-    except Exception:
-        return None
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
 def get_mutualfund_holders(ticker):
     try:
         df = yf.Ticker(ticker).mutualfund_holders

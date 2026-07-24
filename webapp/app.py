@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date
 
 import numpy as np
 import streamlit as st
@@ -13,7 +13,7 @@ from lib.translate import to_korean
 from lib.glossary import render_glossary
 from lib.journal import append_entry, load_journal
 from lib.config import NEWS_LOOKBACK_DAYS
-from lib.page_helpers import inject_base_styles, render_wordmark
+from lib.page_helpers import inject_base_styles, render_wordmark, news_date_str
 from lib.search import fetch_and_store_ticker, render_sidebar
 
 if "step" not in st.session_state:
@@ -42,17 +42,6 @@ def news_headline_link(n):
     """뉴스 헤드라인을 원문 링크가 있으면 클릭 가능한 마크다운 링크로, 없으면 텍스트 그대로."""
     headline = to_korean(n["headline"])
     return f"[{headline}]({n['url']})" if n.get("url") else headline
-
-
-def news_date_str(n):
-    """Finnhub unix timestamp를 날짜로 변환 — 뉴스 신선도 표시용."""
-    ts = n.get("datetime")
-    if not ts:
-        return None
-    try:
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-    except (ValueError, OSError):
-        return None
 
 
 def evidence(msg):
@@ -137,8 +126,10 @@ def render_neutral_context():
     earnings_date = st.session_state.earnings_date
     if earnings_date:
         days_left = int(np.busday_count(date.today(), earnings_date))
-        if days_left <= 10:
+        if 0 <= days_left <= 10:
             evidence(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능 (방향 무관)")
+        elif days_left < 0:
+            st.caption(f"실적 발표일: {earnings_date} (지난 실적 발표 — 다음 일정 미반영일 수 있음)")
         else:
             st.caption(f"실적 발표일: {earnings_date} (D-{days_left}, 임박 아님)")
 
@@ -208,8 +199,7 @@ def render_side(title, groups, preview_count=5):
 
 
 if st.session_state.step not in ("search", "compare"):
-    st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
-    st.caption("나스닥 종목의 매수/매도 관점을 한 번에 비교해서 보여주는 도구입니다. 투자 조언이 아니며, 참고용입니다.")
+    st.title("🔍 정밀 검토 — EnterTicker")
 
 if isinstance(st.session_state.step, int):
     guided_labels = ["반대관점", "지지관점", "Conflict", "손절/익절", "결정메모", "최종확인", "기록완료"]
@@ -278,7 +268,7 @@ elif st.session_state.step == "compare":
     ownership = st.session_state.ownership
     if earnings_date:
         days_left = int(np.busday_count(date.today(), earnings_date))
-        if days_left <= 10:
+        if 0 <= days_left <= 10:
             st.caption(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능 (방향 무관)")
     if ownership["float_ratio"] and ownership["float_ratio"] < 0.3:
         st.caption(f"💧 저유동주식 — 유동주식비율 {ownership['float_ratio']*100:.1f}% (방향과 무관하게 변동성 왜곡 위험)")
