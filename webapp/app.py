@@ -1,39 +1,29 @@
 import sys
 from pathlib import Path
-from datetime import date, timedelta, datetime
+from datetime import date, datetime
 
 import numpy as np
 import streamlit as st
 
 sys.path.append(str(Path(__file__).parent))
 
-from lib.data import (
-    get_price_history, get_yf_info, get_yf_calendar, get_finnhub_recommendation_trends,
-    get_finnhub_company_news, resolve_ticker,
-)
-from lib.indicators import compute_indicators, classify_indicator_signals
 from lib.risk import compute_stop_take_profit
-from lib.peers import (
-    classify_peers, tier1_stats, get_financial_health,
-    RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK,
-)
-from lib.ownership import (
-    get_ownership_summary, get_fund_level_active_passive, get_firm_level_holders,
-    get_recent_insider_transactions,
-)
-from lib.qualitative import (
-    classify_news_tone, news_tone_summary, classify_analyst_trend,
-    filter_analyst_related_news, filter_corporate_event_news,
-)
+from lib.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
 from lib.translate import to_korean
 from lib.glossary import render_glossary
 from lib.journal import append_entry, load_journal
-from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
-
-st.set_page_config(page_title="Devil's Advocate — 스윙 트레이딩 의사결정 보조", layout="wide")
+from lib.config import NEWS_LOOKBACK_DAYS
+from lib.page_helpers import inject_base_styles, render_wordmark
+from lib.search import fetch_and_store_ticker, render_sidebar
 
 if "step" not in st.session_state:
     st.session_state.step = "search"
+
+st.set_page_config(
+    page_title="EnterTicker",
+    layout="centered" if st.session_state.step == "search" else "wide",
+)
+inject_base_styles()
 
 
 def goto(step):
@@ -116,6 +106,32 @@ def compute_flagged_context():
     return items
 
 
+def filter_context(context_items, category, tag):
+    """compute_flagged_context() 결과에서 카테고리·방향이 일치하는 문구만 뽑는다."""
+    return [msg for msg, t, cat in context_items if cat == category and t == tag]
+
+
+def render_technical_evidence(tag, empty_msg):
+    """기술적 신호 중 tag(방향)와 일치하는 것만 나열 — Step2(반대)/Step3(지지)가 공유."""
+    matched = [s for s in st.session_state.signals if s[2] == tag]
+    if not matched:
+        st.caption(empty_msg)
+    for name, desc, _ in matched:
+        evidence(f"**{name}** — {desc}")
+
+
+def render_news_evidence(tag, empty_msg):
+    """뉴스 중 tag(방향)와 일치하는 최근 5건 — Step2(반대)/Step3(지지)가 공유."""
+    news = [n for n in st.session_state.news_classified if n["lean"] == tag]
+    if not news:
+        st.caption(empty_msg)
+        return
+    for n in news[:5]:
+        date_str = news_date_str(n)
+        date_part = f" ({date_str})" if date_str else ""
+        evidence(f"📰 {news_headline_link(n)}{date_part} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
+
+
 def render_neutral_context():
     """방향과 무관하게 항상 참고할 이벤트/유동성 정보 (실적일 임박, 저유동주식)."""
     earnings_date = st.session_state.earnings_date
@@ -146,7 +162,9 @@ def collect_bull_bear_lines():
                 f"{analyst_trend['strongSell']+analyst_trend['sell']}")
         (qual_bull if analyst_trend["lean"] == "bullish" else qual_bear).append(line)
 
-    for n in st.session_state.news_classified:
+    # 헤드라인 하나당 번역 API 호출 1회 — 전체를 다 돌면(수백 건) 화면이 오래 멈춰 보이므로
+    # 최신 순으로 일정 개수만 번역/표시 대상으로 삼는다.
+    for n in st.session_state.news_classified[:30]:
         date_str = news_date_str(n)
         date_part = f" ({date_str})" if date_str else ""
         line = f"뉴스: {news_headline_link(n)}{date_part}"
@@ -156,30 +174,42 @@ def collect_bull_bear_lines():
             qual_bear.append(line)
 
     context_items = compute_flagged_context()
-    risk_bull = [msg for msg, tag, cat in context_items if cat == "risk" and tag == "bullish"]
-    risk_bear = [msg for msg, tag, cat in context_items if cat == "risk" and tag == "bearish"]
-    val_bull = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == "bullish"]
-    val_bear = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == "bearish"]
 
     return {
-        "bullish": {"기술적 근거": tech_bull, "이벤트·유동성": risk_bull, "밸류에이션": val_bull, "정성적 근거": qual_bull},
-        "bearish": {"기술적 근거": tech_bear, "이벤트·유동성": risk_bear, "밸류에이션": val_bear, "정성적 근거": qual_bear},
+        "bullish": {
+            "기술적 근거": tech_bull,
+            "이벤트·유동성": filter_context(context_items, "risk", "bullish"),
+            "밸류에이션": filter_context(context_items, "valuation", "bullish"),
+            "정성적 근거": qual_bull,
+        },
+        "bearish": {
+            "기술적 근거": tech_bear,
+            "이벤트·유동성": filter_context(context_items, "risk", "bearish"),
+            "밸류에이션": filter_context(context_items, "valuation", "bearish"),
+            "정성적 근거": qual_bear,
+        },
     }
 
 
-def render_side(title, groups):
+def render_side(title, groups, preview_count=5):
     st.subheader(title)
     for group_name, lines in groups.items():
         st.markdown(f"**{group_name}**")
         if lines:
-            for line in lines:
+            visible, rest = lines[:preview_count], lines[preview_count:]
+            for line in visible:
                 st.markdown(f"- {line}")
+            if rest:
+                with st.expander(f"더보기 ({len(rest)}개)"):
+                    for line in rest:
+                        st.markdown(f"- {line}")
         else:
             st.caption("없음")
 
 
-st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
-st.caption("나스닥 종목의 매수/매도 관점을 한 번에 비교해서 보여주는 도구입니다. 투자 조언이 아니며, 참고용입니다.")
+if st.session_state.step not in ("search", "compare"):
+    st.title("📉 Devil's Advocate — 스윙 트레이딩 의사결정 보조")
+    st.caption("나스닥 종목의 매수/매도 관점을 한 번에 비교해서 보여주는 도구입니다. 투자 조언이 아니며, 참고용입니다.")
 
 if isinstance(st.session_state.step, int):
     guided_labels = ["반대관점", "지지관점", "Conflict", "손절/익절", "결정메모", "최종확인", "기록완료"]
@@ -188,106 +218,53 @@ if isinstance(st.session_state.step, int):
 
 if "ticker" in st.session_state:
     with st.sidebar:
-        st.caption(f"📊 {st.session_state.ticker} 상세 데이터는 아래 페이지에서 각각 볼 수 있습니다.")
-        st.page_link("pages/1_차트.py", label="차트", icon="📈")
-        st.page_link("pages/2_섹터_Peer_비교.py", label="섹터 Peer 비교", icon="📊")
-        st.page_link("pages/3_Peer_목록.py", label="Peer 목록", icon="📋")
-        st.page_link("pages/4_소유구조.py", label="소유구조", icon="🏛️")
-        st.page_link("pages/5_애널리스트_뉴스.py", label="애널리스트 관련 뉴스", icon="📰")
-        st.page_link("pages/6_기업_이벤트_뉴스.py", label="기업 이벤트 뉴스", icon="🏢")
-        st.page_link("pages/7_옵션_데이터.py", label="옵션 데이터", icon="🧮")
+        render_sidebar()
 
 # ----------------------------------------------------------------------------
 # SEARCH: 티커 검색 — 포지션 선택 없이 바로 비교 화면으로
 # ----------------------------------------------------------------------------
 if st.session_state.step == "search":
-    st.header("🔍 티커 검색")
-    st.caption("티커나 기업명을 입력하면 매수 관점 vs 매도 관점 비교, 차트, 뉴스, 재무 데이터를 바로 볼 수 있습니다.")
-    raw_input = st.text_input(
-        "티커 또는 기업명 (한글/영문 모두 가능, 예: USAR, Nvidia, 엔비디아)",
-        value=st.session_state.get("ticker", ""),
+    render_wordmark("Enter", "Ticker", size="3.4rem", align="center", margin="8vh 0 2rem 0", sep="")
+
+    st.markdown(
+        '<style>'
+        '[data-testid="stForm"] {border: none; padding: 0;}'
+        '[data-testid="stForm"] [data-testid="stHorizontalBlock"] {'
+        '  gap: 0; align-items: center; background: rgb(240, 242, 246);'
+        '  border-radius: 28px; padding: 4px 4px 4px 20px;'
+        '}'
+        '[data-testid="stForm"] [data-testid="stTextInput"] > div {'
+        '  border: none; background: transparent; box-shadow: none;'
+        '}'
+        '[data-testid="stForm"] [data-testid="stTextInput"] input {'
+        '  background: transparent; height: 42px; font-size: 1.05rem;'
+        '}'
+        '[data-testid="stForm"] [data-testid="stFormSubmitButton"] button {'
+        '  border-radius: 24px; height: 42px; width: 100%;'
+        '}'
+        '</style>',
+        unsafe_allow_html=True,
     )
+    with st.form("search_form"):
+        col_input, col_btn = st.columns([6, 1])
+        with col_input:
+            raw_input = st.text_input(
+                "티커 또는 기업명 (한글/영문 모두 가능, 예: NVDA, Nvidia, 엔비디아)",
+                value=st.session_state.get("ticker", ""),
+                label_visibility="collapsed",
+                placeholder="티커 또는 기업명을 입력하세요 (예: NVDA, Nvidia, 엔비디아)",
+            )
+        with col_btn:
+            submitted = st.form_submit_button("Enter", type="primary", use_container_width=True)
 
-    if st.button("검색 →", type="primary"):
-        with st.spinner(f"'{raw_input}' 티커 확인 중..."):
-            ticker, matched_name = resolve_ticker(raw_input)
-        if not ticker:
-            st.error("티커 또는 기업명을 입력해주세요.")
-            st.stop()
-        if matched_name:
-            st.info(f"'{raw_input}' → **{ticker}** ({matched_name})로 해석했습니다.")
-
-        with st.spinner(f"{ticker} 데이터 수집 중... (가격, 지표, peer, 소유구조)"):
-            try:
-                df = get_price_history(ticker, "2024-01-01")
-                if df is None or df.empty:
-                    st.error("가격 데이터를 가져오지 못했습니다. 티커/기업명을 확인해주세요.")
-                    st.stop()
-                ind = compute_indicators(df)
-                info = get_yf_info(ticker)
-                earnings_date = get_yf_calendar(ticker)
-                qqq_df = get_price_history("QQQ", "2023-01-01")
-                qqq_ma200 = qqq_df["Close"].rolling(200).mean().iloc[-1]
-                qqq_price = qqq_df["Close"].iloc[-1]
-                regime_favorable = qqq_price > qqq_ma200
-
-                peer_data = classify_peers(ticker)
-                target_health = get_financial_health(ticker)
-                ownership = get_ownership_summary(ticker)
-                fund_ap = get_fund_level_active_passive(ticker)
-                firm_holders = get_firm_level_holders(ticker)
-                insider_tx = get_recent_insider_transactions(ticker)
-
-                signals = classify_indicator_signals(ind)
-
-                # 정성적 근거: 뉴스 톤(키워드 근사치) + 애널리스트 투자의견
-                today_str = date.today().isoformat()
-                from_str = (date.today() - timedelta(days=NEWS_LOOKBACK_DAYS)).isoformat()
-                raw_news = get_finnhub_company_news(ticker, from_str, today_str)
-                news_classified = classify_news_tone(raw_news)
-                news_summary = news_tone_summary(news_classified)
-
-                rec_trends = get_finnhub_recommendation_trends(ticker)
-                analyst_trend = classify_analyst_trend(rec_trends)
-
-                # 애널리스트/기업이벤트 관련 뉴스 — 더 넓은 기간에서 근사 필터링
-                wide_from_str = (date.today() - timedelta(days=ANALYST_NEWS_LOOKBACK_DAYS)).isoformat()
-                wide_news = get_finnhub_company_news(ticker, wide_from_str, today_str)
-                analyst_news = filter_analyst_related_news(wide_news)
-                corporate_events = filter_corporate_event_news(wide_news)
-            except Exception as e:
-                st.error(f"데이터 수집 중 오류: {e}")
-                st.stop()
-
-        # 새 종목 검색 — 이전 종목의 포지션 의도·메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
-        st.session_state.pop("intent", None)
-        st.session_state.pop("memo", None)
-        st.session_state.pop("stop", None)
-        st.session_state.pop("take_profit", None)
-        st.session_state.pop("entry_price", None)
-
-        st.session_state.update(
-            ticker=ticker,
-            df=df, ind=ind, info=info, earnings_date=earnings_date,
-            qqq_price=qqq_price, qqq_ma200=qqq_ma200, regime_favorable=regime_favorable,
-            peer_data=peer_data, target_health=target_health, ownership=ownership, fund_ap=fund_ap,
-            firm_holders=firm_holders, insider_tx=insider_tx, signals=signals,
-            news_classified=news_classified, news_summary=news_summary,
-            analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
-        )
+    if submitted and fetch_and_store_ticker(raw_input):
         goto("compare")
 
 # ----------------------------------------------------------------------------
 # COMPARE: 매수 관점 vs 매도 관점 비교 (핵심 기능 — 포지션 선택 없이 바로 확인)
 # ----------------------------------------------------------------------------
 elif st.session_state.step == "compare":
-    ticker = st.session_state.ticker
-    st.header(f"{ticker} — 매수 관점 vs 매도 관점")
-    st.caption("점수를 하나로 합치지 않고, 기술적/이벤트·유동성/밸류에이션/정성적 근거를 매수 관점과 매도 관점으로 나눠 병치합니다.")
-    render_glossary(["RSI", "MACD", "이동평균(MA)", "볼린저밴드", "ATR"], title="ℹ️ 기술적 지표 설명")
-
-    st.subheader("📋 공통 참고 사항")
-    render_neutral_context()
+    render_wordmark("Conflict", "Board", size="2.8rem", align="center", margin="1vh 0 2rem 0")
 
     lines = collect_bull_bear_lines()
     col1, col2 = st.columns(2)
@@ -296,17 +273,18 @@ elif st.session_state.step == "compare":
     with col2:
         render_side("🟠 매도 관점", lines["bearish"])
 
-    news_summary = st.session_state.news_summary
-    st.caption(
-        f"뉴스 톤 요약 (최근 {NEWS_LOOKBACK_DAYS}일, 총 {news_summary['total']}건): "
-        f"긍정 {news_summary['bullish']} / 부정 {news_summary['bearish']} / 중립 {news_summary['neutral']}"
-    )
-    st.caption("📊 상세 데이터(차트·재무·소유구조·뉴스·옵션)는 왼쪽 사이드바에서 바로 확인할 수 있습니다.")
+    # 방향과 무관한 참고사항은 실제로 급한 것만(실적 임박·저유동) 노출 — 평소엔 생략
+    earnings_date = st.session_state.earnings_date
+    ownership = st.session_state.ownership
+    if earnings_date:
+        days_left = int(np.busday_count(date.today(), earnings_date))
+        if days_left <= 10:
+            st.caption(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능 (방향 무관)")
+    if ownership["float_ratio"] and ownership["float_ratio"] < 0.3:
+        st.caption(f"💧 저유동주식 — 유동주식비율 {ownership['float_ratio']*100:.1f}% (방향과 무관하게 변동성 왜곡 위험)")
 
     st.divider()
-    st.subheader("더 신중하게 결정하고 싶다면")
-    st.caption("반대 관점을 먼저 강제로 확인하고, 손절/익절 기준까지 잡아 매매일지에 남기는 단계별 정밀 검토 흐름입니다.")
-    if st.button("🔍 정밀 검토 시작 (반대 관점부터 단계별로)", type="primary"):
+    if st.button("🔍 정밀 검토 시작 (반대 관점부터 단계별로)", type="tertiary"):
         goto("intent")
 
 # ----------------------------------------------------------------------------
@@ -340,25 +318,20 @@ elif st.session_state.step == 2:
     render_glossary(["RSI", "MACD", "이동평균(MA)", "볼린저밴드", "ATR"], title="ℹ️ 기술적 지표 설명")
 
     st.subheader("🔧 기술적 근거")
-    signals = st.session_state.signals
-    opposite_signals = [s for s in signals if s[2] == opposite_tag]
-    if not opposite_signals:
-        st.caption("기술적 지표상 뚜렷한 반대 근거는 없습니다.")
-    for name, desc, _ in opposite_signals:
-        evidence(f"**{name}** — {desc}")
+    render_technical_evidence(opposite_tag, "기술적 지표상 뚜렷한 반대 근거는 없습니다.")
 
     st.subheader("⚠️ 이벤트·유동성 리스크")
     st.caption("방향과 무관한 일반 참고 항목 + 당신의 의도와 반대되는 리스크 항목")
     render_neutral_context()
     context_items = compute_flagged_context()
-    risk_items = [msg for msg, tag, cat in context_items if cat == "risk" and tag == opposite_tag]
+    risk_items = filter_context(context_items, "risk", opposite_tag)
     for msg in risk_items:
         evidence(msg)
     if not risk_items:
         st.caption("반대 방향 이벤트·유동성 리스크 없음")
 
     st.subheader("💰 밸류에이션 근거")
-    valuation_items = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == opposite_tag]
+    valuation_items = filter_context(context_items, "valuation", opposite_tag)
     if valuation_items:
         for msg in valuation_items:
             evidence(msg)
@@ -376,14 +349,7 @@ elif st.session_state.step == 2:
             f"— {'회의적' if opposite_tag=='bearish' else '긍정적'} 쪽으로 쏠림"
         )
 
-    opposite_news = [n for n in st.session_state.news_classified if n["lean"] == opposite_tag]
-    if opposite_news:
-        for n in opposite_news[:5]:
-            date_str = news_date_str(n)
-            date_part = f" ({date_str})" if date_str else ""
-            evidence(f"📰 {news_headline_link(n)}{date_part} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
-    else:
-        st.caption(f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 반대 관점 키워드 매칭 없음")
+    render_news_evidence(opposite_tag, f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 반대 관점 키워드 매칭 없음")
 
     confirmed = st.checkbox("위 반대 관점 근거를 확인했습니다.")
     col1, col2 = st.columns([1, 5])
@@ -404,25 +370,20 @@ elif st.session_state.step == 3:
     st.caption("색상으로 유불리를 표시하지 않습니다 — 아래는 모두 당신의 의도를 지지하는 근거입니다.")
 
     st.subheader("🔧 기술적 근거")
-    signals = st.session_state.signals
-    same_signals = [s for s in signals if s[2] == same_tag]
-    if not same_signals:
-        st.caption("기술적 지표상 뚜렷한 지지 근거는 없습니다.")
-    for name, desc, _ in same_signals:
-        evidence(f"**{name}** — {desc}")
+    render_technical_evidence(same_tag, "기술적 지표상 뚜렷한 지지 근거는 없습니다.")
 
-    neutral_signals = [s for s in signals if s[2] == "neutral"]
+    neutral_signals = [s for s in st.session_state.signals if s[2] == "neutral"]
     for name, desc, _ in neutral_signals:
         st.caption(f"(중립) {name} — {desc}")
 
     context_items = compute_flagged_context()
-    risk_items = [msg for msg, tag, cat in context_items if cat == "risk" and tag == same_tag]
+    risk_items = filter_context(context_items, "risk", same_tag)
     if risk_items:
         st.subheader("⚠️ 이벤트·유동성 근거")
         for msg in risk_items:
             evidence(msg)
 
-    valuation_items = [msg for msg, tag, cat in context_items if cat == "valuation" and tag == same_tag]
+    valuation_items = filter_context(context_items, "valuation", same_tag)
     if valuation_items:
         st.subheader("💰 밸류에이션 근거")
         for msg in valuation_items:
@@ -444,14 +405,7 @@ elif st.session_state.step == 3:
             f"중립 {analyst_trend['hold']} / 매도 {analyst_trend['strongSell']+analyst_trend['sell']} — 중립/혼조"
         )
 
-    same_news = [n for n in st.session_state.news_classified if n["lean"] == same_tag]
-    if same_news:
-        for n in same_news[:5]:
-            date_str = news_date_str(n)
-            date_part = f" ({date_str})" if date_str else ""
-            evidence(f"📰 {news_headline_link(n)}{date_part} _({n['source']})_ — 매칭 키워드: {', '.join(n['matched'])}")
-    else:
-        st.caption(f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 지지 관점 키워드 매칭 없음")
+    render_news_evidence(same_tag, f"최근 {NEWS_LOOKBACK_DAYS}일 뉴스 중 지지 관점 키워드 매칭 없음")
 
     news_summary = st.session_state.news_summary
     st.caption(
@@ -607,6 +561,7 @@ elif st.session_state.step == 8:
     if st.button("새 종목 분석하기"):
         reset()
 
-st.divider()
-if st.button("🔄 처음부터 다시 (전체 초기화)"):
-    reset()
+if st.session_state.step != "search":
+    st.divider()
+    if st.button("🔄 처음부터 다시 (전체 초기화)"):
+        reset()

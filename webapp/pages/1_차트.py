@@ -7,22 +7,33 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.data import get_intraday_price_history
 from lib.charts import render_price_chart_figure, PERIOD_OPTIONS, INTRADAY_OPTIONS, PLOTLY_CONFIG
-from lib.page_helpers import require_analysis
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.search import render_sidebar
 
-st.set_page_config(page_title="차트 — Devil's Advocate", layout="wide")
+st.set_page_config(page_title="Price Chart — EnterTicker", layout="wide")
+inject_base_styles()
 require_analysis()
 
+with st.sidebar:
+    render_sidebar()
+
 ticker = st.session_state.ticker
-st.title(f"📈 {ticker} — 최근 주가 차트")
-st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
+render_wordmark("Price", "Chart")
+st.caption(ticker)
+st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 list_col, chart_col = st.columns([1, 5])
+
+def _clear_intraday_choice():
+    st.session_state.chart_intraday_choice = None
+
 
 with list_col:
     st.markdown("**일봉**")
     daily_choice = st.radio(
         "일봉 기간", list(PERIOD_OPTIONS.keys()), index=2, key="chart_daily_choice", label_visibility="collapsed",
+        on_change=_clear_intraday_choice,
     )
     st.markdown("**분봉**")
     st.caption("Yahoo 제약상 분봉은 최근 며칠~몇 개월치만 조회됩니다.")

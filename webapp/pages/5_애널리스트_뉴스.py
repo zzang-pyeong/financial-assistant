@@ -7,14 +7,20 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.translate import to_korean
 from lib.config import ANALYST_NEWS_LOOKBACK_DAYS
-from lib.page_helpers import require_analysis, news_date_str
+from lib.page_helpers import require_analysis, news_date_str, inject_base_styles, render_wordmark
+from lib.search import render_sidebar
 
-st.set_page_config(page_title="애널리스트 관련 뉴스 — Devil's Advocate", layout="wide")
+st.set_page_config(page_title="Analyst News — EnterTicker", layout="wide")
+inject_base_styles()
 require_analysis()
 
+with st.sidebar:
+    render_sidebar()
+
 ticker = st.session_state.ticker
-st.title(f"📰 {ticker} — 애널리스트 관련 뉴스 (근사치)")
-st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
+render_wordmark("Analyst", "News")
+st.caption(ticker)
+st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 st.caption(

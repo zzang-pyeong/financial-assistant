@@ -8,18 +8,24 @@ import streamlit as st
 sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.data import get_option_expirations, get_option_chain
-from lib.page_helpers import require_analysis
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.search import render_sidebar
 
-st.set_page_config(page_title="옵션 데이터 — Devil's Advocate", layout="wide")
+st.set_page_config(page_title="Options Data — EnterTicker", layout="wide")
+inject_base_styles()
 require_analysis()
 
+with st.sidebar:
+    render_sidebar()
+
 ticker = st.session_state.ticker
-st.title(f"🧮 {ticker} — 옵션 데이터")
+render_wordmark("Options", "Data")
+st.caption(ticker)
 st.caption(
     "⚠️ '지금 이 순간'의 스냅샷입니다. 과거 추이가 아니라, 앞으로 6개월 이내 만기가 도래할 "
     "옵션들의 현재 미결제약정(OI)·거래량을 보여줍니다."
 )
-st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
+st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 expirations = get_option_expirations(ticker)

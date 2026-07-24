@@ -7,6 +7,10 @@ RUNWAY_CAUTION_MONTHS = 12
 QUICK_RATIO_RISK = 0.5
 QUICK_RATIO_GOOD = 1.0
 
+# Peer tier 판정 — 동일 섹터 폴백 시 시가총액 밴드(대상의 0.1~10배)
+CAP_BAND_LOW = 0.1
+CAP_BAND_HIGH = 10.0
+
 # 부록 5.2 기본 키워드 사전 (섹터별로 확장 가능)
 DEFAULT_KEYWORD_DICTS = {
     "rare_earth": [
@@ -88,9 +92,41 @@ def auto_detect_keywords(target_summary):
     return None, []
 
 
+def _norm(value):
+    """산업·섹터 문자열을 대소문자/공백 차이 없이 비교하기 위한 정규화. None → ''."""
+    return (value or "").strip().lower()
+
+
+def _within_cap_band(target_cap, peer_cap, low=CAP_BAND_LOW, high=CAP_BAND_HIGH):
+    """시가총액이 대상의 low×~high× 범위 안인지. 결측/비수치/0 이하면 False(보수적)."""
+    if not isinstance(target_cap, (int, float)) or not isinstance(peer_cap, (int, float)):
+        return False
+    if target_cap <= 0 or peer_cap <= 0:
+        return False
+    return low <= (peer_cap / target_cap) <= high
+
+
+def _classify_one(t_sector, t_industry, t_cap, p_sector, p_industry, p_cap, matches):
+    """(tier, tier_basis) 반환. 우선순위 라벨: 동일 산업 > 동일 섹터+시총밴드 > 니치 키워드.
+    tier 자체는 OR(순서 무관), 라벨만 우선순위."""
+    if t_industry and p_industry and t_industry == p_industry:
+        return 1, "same industry"
+    if t_sector and p_sector and t_sector == p_sector and _within_cap_band(t_cap, p_cap):
+        return 1, "same sector + cap band"
+    if matches:
+        return 1, "niche keyword"
+    return 2, ""
+
+
 def classify_peers(ticker, extra_keywords=None):
     peers = [p for p in get_finnhub_peers(ticker) if p != ticker]
     target_summary = get_business_summary(ticker)
+    target_info = get_yf_info(ticker)
+
+    # 산업/섹터는 정규화 slug(industryKey/sectorKey) 우선, 없으면 표시 문자열 폴백
+    t_sector = _norm(target_info.get("sectorKey") or target_info.get("sector"))
+    t_industry = _norm(target_info.get("industryKey") or target_info.get("industry"))
+    t_cap = target_info.get("marketCap")
 
     dict_name, keywords = auto_detect_keywords(target_summary)
     if extra_keywords:
@@ -103,12 +139,20 @@ def classify_peers(ticker, extra_keywords=None):
         summary = get_business_summary(p)
         info = get_yf_info(p)
         matches = [kw for kw in target_matches if kw in summary]
-        tier = 1 if matches else 2
+
+        p_sector = _norm(info.get("sectorKey") or info.get("sector"))
+        p_industry = _norm(info.get("industryKey") or info.get("industry"))
+        p_cap = info.get("marketCap")
+
+        tier, tier_basis = _classify_one(
+            t_sector, t_industry, t_cap, p_sector, p_industry, p_cap, matches,
+        )
         results.append(
             {
                 "ticker": p,
                 "name": info.get("shortName"),
                 "tier": tier,
+                "tier_basis": tier_basis,  # 신규(추가만) — 기존 소비자에 무해
                 "matches": matches,
                 "forwardPE": info.get("forwardPE"),
                 "health": get_financial_health(p),

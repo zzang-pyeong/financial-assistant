@@ -8,14 +8,20 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.ownership import insider_trade_direction, float_ratio_interpretation, institution_pct_interpretation
 from lib.glossary import render_glossary
-from lib.page_helpers import require_analysis
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.search import render_sidebar
 
-st.set_page_config(page_title="소유구조 — Devil's Advocate", layout="wide")
+st.set_page_config(page_title="Ownership Map — EnterTicker", layout="wide")
+inject_base_styles()
 require_analysis()
 
+with st.sidebar:
+    render_sidebar()
+
 ticker = st.session_state.ticker
-st.title(f"🏛️ {ticker} — 소유구조")
-st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
+render_wordmark("Ownership", "Map")
+st.caption(ticker)
+st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 own = st.session_state.ownership

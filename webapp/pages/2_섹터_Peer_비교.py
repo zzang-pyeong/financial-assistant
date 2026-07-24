@@ -7,14 +7,20 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.peers import tier1_stats, runway_interpretation, quick_ratio_interpretation, roe_interpretation
 from lib.glossary import render_glossary
-from lib.page_helpers import require_analysis
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.search import render_sidebar
 
-st.set_page_config(page_title="섹터 Peer 비교 — Devil's Advocate", layout="wide")
+st.set_page_config(page_title="Peer Compare — EnterTicker", layout="wide")
+inject_base_styles()
 require_analysis()
 
+with st.sidebar:
+    render_sidebar()
+
 ticker = st.session_state.ticker
-st.title(f"📊 {ticker} — 섹터 Peer 비교")
-st.page_link("app.py", label="← 메인 흐름으로 돌아가기", icon="🏠")
+render_wordmark("Peer", "Compare")
+st.caption(ticker)
+st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 peer_data = st.session_state.peer_data
@@ -23,7 +29,7 @@ st.write(f"대상 종목 Forward PE: **{fwd_pe:.1f}**" if isinstance(fwd_pe, (in
 if peer_data["dict_name"]:
     st.caption(f"자동 판별된 섹터 키워드 그룹: {peer_data['dict_name']} ({', '.join(peer_data['target_matches'])})")
 else:
-    st.caption("자동 판별된 니치 섹터 키워드 없음 — 전체 peer가 Tier2로 표시됨")
+    st.caption("니치 키워드 미검출 — 동일 산업/섹터(시총밴드) 기준으로 Tier1을 판정합니다")
 
 stats = tier1_stats(peer_data["peers"])
 if stats:
