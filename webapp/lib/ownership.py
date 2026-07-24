@@ -21,13 +21,23 @@ def get_ownership_summary(ticker):
     info = get_yf_info(ticker)
     float_shares = info.get("floatShares")
     shares_out = info.get("sharesOutstanding")
+    insiders_pct = info.get("heldPercentInsiders")
+
+    float_is_estimated = False
+    if not float_shares and shares_out and isinstance(insiders_pct, (int, float)):
+        # yfinance가 floatShares를 못 줄 때의 근사치 — 유동주식 ≈ 총발행주식 × (1 - 내부자보유율).
+        # 기관 락업 등 다른 제한 물량은 반영 못 해 실제보다 다소 높게 나올 수 있음(보수적이지 않은 근사).
+        float_shares = shares_out * (1 - insiders_pct)
+        float_is_estimated = True
+
     return {
         "institutions_pct": info.get("heldPercentInstitutions"),
-        "insiders_pct": info.get("heldPercentInsiders"),
+        "insiders_pct": insiders_pct,
         "short_pct_float": info.get("shortPercentOfFloat"),
         "float_shares": float_shares,
         "shares_outstanding": shares_out,
         "float_ratio": (float_shares / shares_out) if float_shares and shares_out else None,
+        "float_is_estimated": float_is_estimated,
     }
 
 
@@ -102,6 +112,18 @@ def float_ratio_interpretation(ratio):
     if ratio >= 0.3:
         return "보통 — 내부자/락업 물량 일부 존재"
     return "저유동주식(Low Float) — 별도 경고. 최근 상장/SPAC합병 등 락업 가능성 체크 필요"
+
+
+def insider_pct_interpretation(pct):
+    if pct is None:
+        return "데이터 없음"
+    if pct >= 0.3:
+        return "30%+ — 창업자·경영진 지배력이 강함, 의사결정이 소수에 집중될 수 있음"
+    if pct >= 0.1:
+        return "10~30% — 경영진 이해관계가 주가와 잘 일치하는 편"
+    if pct >= 0.05:
+        return "5~10% — 보통 수준"
+    return "5% 미만 — 내부자 지분이 희박, 경영진 이해관계 일치도가 낮을 수 있음"
 
 
 def institution_pct_interpretation(pct):

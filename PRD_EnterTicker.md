@@ -126,8 +126,8 @@ Conflict Board — 매수 관점 vs 매도 관점을 2단 컬럼으로 즉시 �
 | # | 파일 | 화면 | 핵심 내용 |
 |---|---|---|---|
 | 1 | `1_차트.py` | Price Chart | 일봉(1M/3M/6M/1Y/전체) 또는 분봉(1분/5분/15분/30분/1시간, 상호 배타적 라디오) 캔들차트 + MA20/MA60 + 거래량. 분봉은 KST로 변환 표시, Yahoo 제약(1분=최근7일 등) 고지 |
-| 2 | `2_섹터_Peer_비교.py` | Peer Compare | 대상 Forward PE, 니치 키워드 그룹(자동판별), Tier1 평균/중앙값(n<3이면 "표본부족" 표기), 재무건전성 expander(EV/Revenue·당좌비율·런웨이·PBR·D/E·ROE, 레버리지 인지형 해석) |
-| 3 | `3_Peer_목록.py` | Peer List | 전체 peer(Tier1+Tier2) 테이블 — tier·판정근거(동일산업/동일섹터·시총/니치키워드)·티커·기업명·Forward PE·EV/Revenue·당좌비율·런웨이 |
+| 2 | `2_Peer_목록.py` | Peer List | 전체 peer(Tier1+Tier2) 테이블 — tier·판정근거(동일산업/동일섹터·시총/니치키워드)·티커·기업명·Forward PE·EV/Revenue·당좌비율·런웨이 |
+| 3 | `3_섹터_Peer_비교.py` | Peer Compare | 대상 Forward PE, 니치 키워드 그룹(자동판별), Tier1 평균/중앙값(n<3이면 "표본부족" 표기), 재무건전성 expander(EV/Revenue·당좌비율·런웨이·PBR·D/E·ROE, 레버리지 인지형 해석) |
 | 4 | `4_소유구조.py` | Ownership Map | 종합 요약표(기관/내부자보유율·공매도비율·유동주식비율·펀드Passive:Active·내부자매매방향성) + 개별 상세 + 내부자 거래 원본(주식보상 제외) 테이블 |
 | 5 | `5_애널리스트_뉴스.py` | Analyst News | 최근 60일 뉴스 중 등급/목표가 키워드 매칭분(최대 8건), 한글 번역, 매칭 키워드 표시 |
 | 6 | `6_기업_이벤트_뉴스.py` | Company Events | M&A·경영진교체·신규계약 키워드 매칭(최대 10건), 카테고리·매칭키워드 표시 |

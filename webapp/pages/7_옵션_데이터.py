@@ -79,7 +79,7 @@ with st.expander("📖 이 표, 어떻게 해석하나요?", expanded=True):
     )
 
 st.divider()
-st.subheader("만기 선택 → 행사가별 상세")
+st.subheader("Call/Put Options")
 chosen = st.selectbox("만기일 선택", near_expirations)
 calls, puts = get_option_chain(ticker, chosen)
 if calls is not None and puts is not None:
@@ -87,13 +87,15 @@ if calls is not None and puts is not None:
     with col1:
         st.write("**콜(Call)**")
         st.dataframe(
-            calls[["strike", "openInterest", "volume", "impliedVolatility"]].sort_values("strike"),
+            calls[["strike", "openInterest", "volume", "impliedVolatility"]]
+            .sort_values("openInterest", ascending=False),
             use_container_width=True, hide_index=True,
         )
     with col2:
         st.write("**풋(Put)**")
         st.dataframe(
-            puts[["strike", "openInterest", "volume", "impliedVolatility"]].sort_values("strike"),
+            puts[["strike", "openInterest", "volume", "impliedVolatility"]]
+            .sort_values("openInterest", ascending=False),
             use_container_width=True, hide_index=True,
         )
     with st.expander("📖 이 표, 어떻게 해석하나요?"):
@@ -103,6 +105,11 @@ if calls is not None and puts is not None:
             "참고할 수 있습니다.\n"
             "- **예시**: 현재가가 $200인데 $210 콜에 OI가 유독 많이 쌓여 있다면, 그 가격대를 "
             "저항선(넘기 어려운 매물대)처럼 보는 참여자가 많다는 신호로 흔히 해석됩니다.\n"
+            "- **openInterest(미결제약정, OI)**: 아직 청산되지 않고 남아있는 계약 수. 클수록 그 "
+            "행사가에 시장 관심이 몰려있다는 뜻입니다.\n"
+            "- **volume(거래량)**: 해당일 실제로 체결된 계약 수. OI는 누적치, volume은 당일 "
+            "활동성 — 거래량이 급증했는데 OI 변화가 적으면 기존 포지션의 매매(청산/롤오버)일 "
+            "가능성이 크고, OI도 함께 늘면 신규 포지션 유입 신호로 볼 수 있습니다.\n"
             "- **IV(implied volatility, 내재변동성)**: 시장이 앞으로 가격이 얼마나 크게 흔들릴 것으로 "
             "보는지를 나타내는 값. 평소보다 유독 높은 행사가/만기가 있다면 그 근처에 불확실성(실적, "
             "소송 결과 등)이 몰려 있다는 뜻일 수 있습니다.\n"

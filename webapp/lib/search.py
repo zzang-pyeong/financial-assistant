@@ -162,8 +162,8 @@ def render_sidebar_search():
 # 사이드바 네비게이션 — 자동 네비(showSidebarNavigation=false)를 끈 대신 전 페이지에서 공통 사용
 _SIDEBAR_PAGES = [
     ("pages/1_차트.py", "Price Chart", "📈"),
-    ("pages/2_섹터_Peer_비교.py", "Peer Compare", "📊"),
-    ("pages/3_Peer_목록.py", "Peer List", "📋"),
+    ("pages/2_Peer_목록.py", "Peer List", "📋"),
+    ("pages/3_섹터_Peer_비교.py", "Peer Compare", "📊"),
     ("pages/4_소유구조.py", "Ownership Map", "🏛️"),
     ("pages/5_애널리스트_뉴스.py", "Analyst News", "📰"),
     ("pages/6_기업_이벤트_뉴스.py", "Company Events", "🏢"),
