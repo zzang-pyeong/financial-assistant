@@ -80,9 +80,23 @@ _RELATIONSHIP_EDGE_COLORS = {
     "합작투자": "#8e44ad",
     "라이선싱": "#16a085",
     "전략적 제휴": "#f39c12",
+    "공시상 언급": "#6b7280",  # 뉴스 기반 5개 유형과 구분되는 중립 회색 — SEC 공시(lib/sec_filings.py)
 }
 _RELATIONSHIP_HUB_COLOR = "#2f6fed"
 _TERMINATED_STATUS = "철회·무산"
+_MAX_PREVIEW_CHARS = 220
+
+
+def _preview_text(headline_tuple):
+    """헤드라인 튜플(dt, headline, url, status, context)에서 hover에 보여줄 문구를 고른다.
+    실제 계약 문맥(뉴스 요약 또는 공시 원문에서 뽑은 스니펫)이 있으면 그걸 우선 쓰고,
+    없으면(문서 fetch 실패 등) 기존처럼 헤드라인 그대로 — "언급됨"보다 "무슨 내용인지"를
+    보여주는 게 목적이라 문맥이 있을 때는 반드시 그쪽을 택한다."""
+    context = headline_tuple[4] if len(headline_tuple) > 4 else None
+    text = context or headline_tuple[1]
+    if len(text) > _MAX_PREVIEW_CHARS:
+        text = text[:_MAX_PREVIEW_CHARS].rstrip() + "…"
+    return text
 
 
 def render_relationship_graph_figure(hub_ticker, hub_name, edges):
@@ -95,13 +109,15 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges):
     grouped = {}
     for e in edges:
         g = grouped.setdefault(e["counterparty_ticker"], {
-            "name": e["counterparty_name"], "types": [], "headlines": [],
+            "name": e["counterparty_name"], "types": [], "headlines": [], "evidence_levels": [],
             "latest_status": None, "latest_dt": -1,
         })
         if e["relationship_type"] not in g["types"]:
             g["types"].append(e["relationship_type"])
+        if e.get("evidence_level") and e["evidence_level"] not in g["evidence_levels"]:
+            g["evidence_levels"].append(e["evidence_level"])
         dt = e.get("datetime") or 0
-        g["headlines"].append((dt, e["headline"], e.get("url"), e["status"]))
+        g["headlines"].append((dt, e["headline"], e.get("url"), e["status"], e.get("context")))
         if dt >= g["latest_dt"]:
             g["latest_dt"] = dt
             g["latest_status"] = e["status"]
@@ -158,11 +174,12 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges):
         node_y.append(y)
         node_text.append(ticker)
         headlines_preview = "<br>".join(
-            f"· [{h[3]}] {h[1]}" for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:5]
+            f"· [{h[3]}] {_preview_text(h)}" for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:5]
         )
+        evidence_str = " / ".join(g["evidence_levels"]) or "근거 불명"
         hover_text.append(
             f"<b>{g['name'] or ticker}</b><br>{', '.join(g['types'])} · 최신 상태: {g['latest_status']}"
-            f"<br>신뢰도: 뉴스 보도 기반 (공식 확인 아님)<br>{headlines_preview}"
+            f"<br>신뢰도: {evidence_str}<br>{headlines_preview}"
         )
     fig.add_trace(go.Scatter(
         x=node_x, y=node_y, mode="markers+text", text=node_text, textposition="bottom center",

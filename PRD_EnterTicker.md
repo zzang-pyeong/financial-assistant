@@ -90,7 +90,8 @@ Conflict Board — 매수 관점 vs 매도 관점을 2단 컬럼으로 즉시 �
 - 자동 주문 실행 없음
 - 매수 수량·포지션 사이징·계좌 리스크 계산 없음 (전면 삭제됨)
 - 개인화 투자자문 없음
-- SEC EDGAR 연동 없음(재무제표는 yfinance `info` 필드에 의존)
+- 재무제표 자체는 여전히 yfinance `info` 필드에 의존 — SEC EDGAR는 관계도의 공시 검색
+  용도로만 씀(6.8절), 재무 데이터 소스로는 안 씀
 - 면책 고지 문구 없음 — **로드맵상 공백으로 다뤄야 할 항목** (10번 참조)
 
 ---
@@ -221,36 +222,59 @@ step 8  : 완료 — trade_journal.csv 전체를 데이터프레임으로 표시
 - 애널리스트 관련 뉴스는 "initiates coverage" 등 구체적 문구로 좁혀 필터 (과거 "coverage"
   단독 키워드가 무관 기사 오매칭시킨 이력 있음)
 
-### 6.8 관계도 (`lib/qualitative.py::match_counterparties`, `lib/charts.py::render_relationship_graph_figure`, 2026-07-25 신규)
+### 6.8 관계도 (`pages/8_관계도.py`, 2026-07-25 신규, 2026-07-25 SEC 공시 소스 추가)
+
+**엣지 소스 두 갈래 — 뉴스(즉시 로딩) + SEC 공시(관계도 페이지 방문 시 지연 로딩)**
+
+**(A) 뉴스 기반** (`lib/qualitative.py::match_counterparties`, 검색 시 즉시 계산)
 - 스코프를 의도적으로 좁힘: 엣지는 **M&A + 신규계약/파트너십 뉴스만**(경영진교체·경쟁관계 제외,
   경쟁관계는 이미 Peer Compare가 다룸)
-- **"이미 아는 회사"만 상대로 인식** — 정밀 개체명인식(NER)/LLM 없이 무료로 구현하기 위한
-  핵심 트레이드오프. 다음 세 출처를 우선순위대로 병합(`lib/search.py`):
-  1. `lib/known_companies.py::STATIC_KNOWN_COMPANIES` — 나스닥/뉴욕 대형주 ~100개 정적 하드코딩
-     목록(최하위 우선순위, 커버리지 확장용, 새 API 호출 없음)
-  2. 현재 티커의 peer 리스트(`classify_peers` 결과)
-  3. 세션 검색 이력(`_remember_search`, `st.session_state.search_history`에 세션 내에서만
-     누적 — CSV 등으로 영속화 안 함. 이유: Streamlit Cloud는 배포 프로세스를 여러 브라우저
-     세션이 공유해서, 공유 파일에 쌓으면 다른 사용자의 검색 이력이 섞여 들어올 위험이 있음)
-  - **실측 확인된 한계**: peer 리스트는 "경쟁사"만 모아주지 거래상대방을 안 줌(NVDA의 peer는
-    전부 반도체 설계 경쟁사고, TSMC/MSFT/IREN 같은 실제 파트너는 전혀 없었음) — 정적 목록을
-    추가한 계기가 됨
-- **매칭 로직**: 후보 회사명에서 접미사(inc/corp/holdings 등) + 업종 일반명사(technology/
-  semiconductor/systems/solutions 등, 2026-07-25 확장 — "ON Semiconductor"/"TE Connectivity"처럼
-  접미사만 떼면 업종 일반 단어 하나만 남아 아무 기사에나 오매칭될 뻔한 사례 발견 후 추가)를
-  제거한 토큰이 **전부(ALL)** 헤드라인에 있어야 매칭(단일 토큰 ANY 매칭은 "Micron Technology"/
+- 매칭 로직: 후보 회사명에서 접미사(inc/corp/holdings 등) + 업종 일반명사(technology/
+  semiconductor/systems/solutions 등 — "ON Semiconductor"/"TE Connectivity"처럼 접미사만
+  떼면 업종 일반 단어 하나만 남아 아무 기사에나 오매칭될 뻔한 사례 발견 후 추가)를 제거한
+  토큰이 **전부(ALL)** 헤드라인에 있어야 매칭(단일 토큰 ANY 매칭은 "Micron Technology"/
   "Marvell Technology"의 "technology"처럼 흔한 단어 하나로 무관한 회사가 오매칭된 실제 사례
   때문에 폐기됨), **또는** 티커 심볼이 원문 그대로(대소문자 구분) 단어경계로 등장하면 매칭
   (3자 미만 티커는 "ON"처럼 흔한 단어와 겹쳐 제외)
-- 매칭된 각 엣지에 유형(관계 유형, "신규 계약/파트너십" 버킷은 매칭 키워드로 공급계약/
-  합작투자/라이선싱/전략적제휴로 추가 세분화)·진행상태(철회·무산/발표·추진/체결·진행,
-  키워드 근사 판정)·근거수준(현재는 전부 "뉴스 보도 기반(공식 확인 아님)" 고정값) 부여
+- "신규 계약/파트너십" 버킷은 매칭 키워드로 공급계약/합작투자/라이선싱/전략적제휴로 세분화,
+  진행상태(철회·무산/발표·추진/체결·진행)는 헤드라인 키워드 근사 판정
+
+**(B) SEC 공시 기반** (`lib/sec_filings.py::find_filing_relationships`, 2026-07-25 신규)
+- **도입 이유(실측)**: 뉴스 전용일 때 티커당 엣지가 2~3개뿐이라 "너무 적다"는 피드백 →
+  SEC EDGAR Full-Text Search(무료, API 키 불필요)로 10-K/10-Q/8-K 공시까지 확장. NVDA로
+  실측 시 뉴스 2~3개 → 뉴스+공시 합쳐 15개 상대 회사·52개 엣지로 증가(예: CoreWeave/MSFT/
+  Oracle/Alphabet — peer도 아니고 뉴스에도 안 잡히던 실제 고객사·파트너 관계).
+- **매칭 방식이 뉴스와 다름**: 일반적 관계 문구("supply agreement", "strategic partnership")를
+  그대로 검색하면 거의 안 걸림을 실측 확인(NVDA 최근 2년 "supply agreement" 검색 0건 — 공시는
+  격식체라 뉴스와 다른 어휘를 씀). 그래서 **"상대 회사 이름 자체가 대상 기업 공시 본문에
+  등장하는지"**로 검색(`ciks` 파라미터로 대상 기업 공시만 필터링). 법인 접미사만 제거하고
+  업종 일반명사는 남김(뉴스 매칭과 반대 — "Taiwan Semiconductor"처럼 그 단어가 회사명의
+  핵심인 경우가 많아서)
+- 검색 대상: `lib/known_companies.py::STATIC_KNOWN_COMPANIES`(~100개) + peer 리스트, 티커당
+  최대 ~110개 후보를 `ThreadPoolExecutor(max_workers=5)`로 병렬 조회(SEC 권장 10req/s 이내),
+  결과는 (대상 CIK, 검색구문) 단위로 `st.cache_data(ttl=86400)` 캐시
+- **정밀 관계 유형·방향성은 판단 안 함** — 히트가 있으면 무조건 "공시상 언급"/상태 "공시 확인"
+  으로만 표시(응답에 스니펫이 없어 문맥 파악 불가 — 경쟁사 비교·소송 등 부정적 맥락일 수도
+  있음을 캡션에 명시하고, 원문 링크를 눌러 직접 확인하도록 유도). 근거수준 "공시 자료(SEC
+  EDGAR, 공식 문서)"로 뉴스("뉴스 보도 기반, 공식 확인 아님")보다 신뢰도 높음을 구분 표시.
+- **알려진 함정(실제로 겪음)**: SEC가 요구하는 User-Agent 형식이 까다로워서, 괄호·URL이
+  들어간 문자열("EnterTicker (github.com/...)")은 403으로 막히고 "앱이름 이메일형식 문자열"
+  ("EnterTicker research contact@example.com")은 통과함 — 실측으로 맞는 형식을 확인 후 반영.
+
+**병합 및 지연 로딩** (`pages/8_관계도.py`)
+- 뉴스 엣지(검색 시 즉시)는 `st.session_state.relationship_edges`, 공시 엣지는 관계도
+  페이지 첫 방문 시에만 계산되어 `filing_edges`에 저장(Ownership Map의 지연로딩과 동일
+  패턴) — 진행률 바(`st.progress`)로 "SEC 공시자료에서 관계 확인 중... (n/110)" 표시,
+  같은 세션 재방문은 즉시 로딩. 두 소스는 스키마(`relationship_type`/`status`/
+  `evidence_level`/`headline`/`url`/`datetime`)가 같아 `render_relationship_graph_figure()`
+  하나가 그대로 병합 렌더링(한 회사가 뉴스+공시 둘 다에서 잡히면 노드 하나에 두 유형·두
+  근거수준이 함께 표시됨 — Tesla 실측 사례로 확인).
 - 시각화: `networkx` 등 그래프 레이아웃 라이브러리 없이 `math.cos/sin` 원형 배치(노드 수가
   항상 작아 강제 배치 알고리즘 불필요). 철회·무산 상태는 점선, 정상은 실선. 범례는 실제
-  등장한 유형만 동적 표시
-- **하지 않는 것**: 관계 방향성(누가 인수/피인수·공급/수요인지), SEC EDGAR·Finnhub Supply
-  Chain API 등 구조화된 소스 연동, 지분보유/자회사 관계 — 전부 비용(프리미엄 API/LLM) 또는
-  몇 주 단위 개발이 필요해 별도 로드맵으로 분리(`relationship_map_design_handoff.md` 참조)
+  등장한 유형만 동적 표시(뉴스 5종 + "공시상 언급" 회색)
+- **하지 않는 것**: 관계 방향성(누가 인수/피인수·공급/수요인지), 공시 본문 파싱을 통한 정밀
+  문맥 분류, 지분보유/자회사 구조 파악, 회사 웹사이트 스크래핑(범용화 불가로 스코프 제외,
+  `relationship_map_design_handoff.md` 참조), Finnhub Supply Chain API(프리미엄 등급, 비용 발생)
 
 ### 6.9 애널리스트 의견 (Finnhub recommendation trends)
 - 최신 기간 strongBuy+buy vs strongSell+sell 비교, buy가 sell의 1.5배 초과면 bullish,
@@ -316,7 +340,7 @@ Finnhub peers/recommendation 1시간, Finnhub news 30분, 옵션 30분, 번역 2
 | 기업명→티커 검색 | Yahoo Finance 비공식 검색 API | 한글 쿼리 미지원, 번역 후 호출 |
 | 뉴스 번역 | deep-translator(Google Translate 비공식) | |
 | 관계도 "이미 아는 회사" 목록 | `lib/known_companies.py` 정적 하드코딩(~100개) | 새 API 아님, 코드에 박아둔 스냅샷 — 10번 참조 |
-| **SEC EDGAR** | **미사용** | 옛 기획에 있었으나 실제로는 전혀 연동 안 됨 |
+| **SEC EDGAR** | **관계도 공시 검색용으로 사용** (`lib/sec_filings.py`, 2026-07-25 추가) | Full-Text Search API, 무료·키 불필요. 재무제표 소스로는 안 씀(여전히 yfinance) |
 
 ---
 
@@ -372,11 +396,14 @@ Finnhub peers/recommendation 1시간, Finnhub news 30분, 옵션 30분, 번역 2
 
 ## 11. 스코프 밖 (아직 손대지 않은 것)
 
-- SEC EDGAR 연동
+- SEC EDGAR를 재무제표 소스로 쓰는 것(관계도 공시 검색 용도로만 씀, 6.8절 참조 — 재무제표는
+  여전히 yfinance)
 - 백테스트 게이트(손절/익절 공식을 과거 데이터로 검증)
 - 매매일지 클라우드 영속화(Google Sheets 등)
 - 애널리스트 공신력 가중치(과거 적중률 기반)
 - 면책 고지, 데이터 신선도 표시(9번 참조 — 우선순위 높은 공백)
+- 회사 웹사이트 스크래핑(관계도 소스로 검토했으나 범용화 불가로 제외, 6.8절 참조)
+- 관계도의 공시 문맥 정밀 분류(경쟁사 비교 vs 실제 파트너십 구분 등) — 현재는 "언급됨"까지만
 
 ---
 

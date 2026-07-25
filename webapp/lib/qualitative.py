@@ -214,6 +214,7 @@ def filter_corporate_event_news(news_list, ticker=None, company_name=None):
                 "source": n.get("source"),
                 "datetime": n.get("datetime"),
                 "url": n.get("url"),
+                "summary": n.get("summary"),
                 "categories": matched_categories,
             })
     return results
@@ -324,6 +325,9 @@ def match_counterparties(corporate_events, known_companies, exclude_ticker=None)
                     "headline": ev.get("headline"),
                     "url": ev.get("url"),
                     "datetime": ev.get("datetime"),
+                    # Finnhub가 이미 주는 기사 요약 — 헤드라인보다 실제 계약 내용을 더
+                    # 구체적으로 담고 있는 경우가 많아 hover에서 우선 표시(lib/charts.py)
+                    "context": ev.get("summary") or None,
                 })
     return edges
 
