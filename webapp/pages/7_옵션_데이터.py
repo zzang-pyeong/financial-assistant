@@ -92,14 +92,14 @@ if calls is not None and puts is not None:
         st.write("**콜(Call)**")
         st.dataframe(
             calls[["strike", "openInterest", "volume", "impliedVolatility"]]
-            .sort_values("openInterest", ascending=False),
+            .sort_values("volume", ascending=False),
             use_container_width=True, hide_index=True,
         )
     with col2:
         st.write("**풋(Put)**")
         st.dataframe(
             puts[["strike", "openInterest", "volume", "impliedVolatility"]]
-            .sort_values("openInterest", ascending=False),
+            .sort_values("volume", ascending=False),
             use_container_width=True, hide_index=True,
         )
     with st.expander("📖 이 표, 어떻게 해석하나요?"):
