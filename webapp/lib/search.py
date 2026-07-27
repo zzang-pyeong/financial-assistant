@@ -52,12 +52,14 @@ def fetch_and_store_ticker(raw_input):
                 st.error("가격 데이터를 가져오지 못했습니다. 티커/기업명을 확인해주세요.")
                 return False
             # MA60/60일 전고점 등 최대 60거래일 롤링 지표가 있어, 이보다 적으면
-            # 지표가 NaN이 되어 손절/익절 계산이 깨짐 — 최근 상장 등으로 이력이
-            # 짧은 종목은 여기서 미리 막고 안내한다.
+            # 지표가 NaN이 됨 — 최근 상장 등으로 이력이 짧은 종목은 기술적 지표만
+            # 건너뛰고, 나머지 정보(기업개요/peer/소유구조/뉴스 등)는 그대로 보여준다.
             if len(df) < 60:
-                st.error("가격 이력이 너무 짧아(최근 상장 등) 기술적 지표를 계산할 수 없습니다.")
-                return False
-            ind = compute_indicators(df)
+                st.info("가격 이력이 너무 짧아(최근 상장 등) 기술적 지표는 건너뜁니다. 나머지 정보는 계속 볼 수 있습니다.")
+                ind, signals = None, []
+            else:
+                ind = compute_indicators(df)
+                signals = classify_indicator_signals(ind)
             info = get_yf_info(ticker)
             earnings_date = get_yf_calendar(ticker)
 
@@ -69,8 +71,6 @@ def fetch_and_store_ticker(raw_input):
             peer_data = classify_peers(ticker)
             target_health = get_financial_health(ticker)
             ownership = get_ownership_summary(ticker)
-
-            signals = classify_indicator_signals(ind)
 
             # 정성적 근거: 뉴스 톤(키워드 근사치) + 애널리스트 투자의견
             # 관련성 게이트를 위해 기업명 전달 — 종목과 무관한 기사를 걸러냄
