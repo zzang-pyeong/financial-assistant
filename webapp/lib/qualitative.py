@@ -225,13 +225,15 @@ _RELATIONSHIP_CATEGORIES = {"인수합병(M&A)", "신규 계약/파트너십"}
 
 # "신규 계약/파트너십" 버킷 안에서 매칭된 키워드로 유형을 더 쪼갬(새 데이터 없이 무료로 가능).
 # 원본 CORPORATE_EVENT_KEYWORDS는 그대로 두고(기존 뉴스 목록 화면 영향 없음), 관계도 전용으로만 세분화.
+# 라벨은 관계도 표준 스키마(직원 지시서 "관계 유형과 방향 규칙")의 허용 목록을 그대로 씀.
 _PARTNERSHIP_SUBTYPE_KEYWORDS = {
-    "공급 계약": ["supply agreement"],
+    "공급·고객 계약": ["supply agreement"],
     "합작투자": ["joint venture"],
     "라이선싱": ["licensing deal"],
 }
 
-# 관계 진행 상태 근사 판정 — 철회 > 발표·추진 > 체결/진행 순 우선순위(둘 다 매칭되면 철회 우선).
+# 관계 진행 상태 근사 판정 — 철회 > 추진 > 진행 순 우선순위(둘 다 매칭되면 철회 우선).
+# 값 자체는 관계도 표준 스키마의 status 허용 목록(발표/추진/진행/완료/철회·무산/미확인)을 따른다.
 _STATUS_TERMINATED_KEYWORDS = [
     "terminates", "terminated", "termination", "walks away", "calls off",
     "called off", "abandons", "abandoned", "scraps deal", "scrapped",
@@ -245,9 +247,10 @@ _STATUS_ANNOUNCED_KEYWORDS = [
 
 def _relationship_type_label(category, matched_in_category):
     """카테고리+매칭 키워드로 관계 유형을 더 구체적으로 라벨링. "신규 계약/파트너십"만
-    공급 계약/합작투자/라이선싱으로 세분화 시도하고, 못 찾으면 "전략적 제휴"로 남긴다."""
+    공급·고객 계약/합작투자/라이선싱으로 세분화 시도하고, 못 찾으면 "전략적 제휴"로 남긴다.
+    "인수합병(M&A)"은 표준 스키마의 짧은 라벨 "M&A"로 바꿔서 돌려준다."""
     if category != "신규 계약/파트너십":
-        return category
+        return "M&A" if category == "인수합병(M&A)" else category
     matched_lower = [k.lower() for k in matched_in_category]
     for label, kws in _PARTNERSHIP_SUBTYPE_KEYWORDS.items():
         if any(kw in matched_lower for kw in kws):
@@ -256,13 +259,42 @@ def _relationship_type_label(category, matched_in_category):
 
 
 def _classify_relationship_status(headline):
-    """관계 진행 상태를 헤드라인 키워드로 근사 판정.
+    """관계 진행 상태를 헤드라인 키워드로 근사 판정 — 표준 스키마의 status 값으로 반환.
     ⚠️ 문구만 보는 근사치 — 실제 계약 이행/무산 여부를 공식 확인하는 것은 아님."""
     if _matched_keywords(headline, _STATUS_TERMINATED_KEYWORDS):
         return "철회·무산"
     if _matched_keywords(headline, _STATUS_ANNOUNCED_KEYWORDS):
-        return "발표·추진"
-    return "체결·진행"
+        return "추진"
+    return "진행"
+
+
+# M&A 방향 판정용 — 인수 동사가 상대회사 언급보다 앞에 있으면("A to acquire Widget Corp")
+# 문장 구조상 앞쪽이 주체(인수자)이므로 상대는 피인수자(검색 대상이 인수자 → outbound),
+# 반대로 상대가 동사보다 앞이면 상대가 주체(인수자)라고 보고 inbound로 판정한다.
+# 동사를 못 찾으면 방향을 억지로 추정하지 않고 unknown으로 둔다(원칙 7 — 추측 금지).
+_ACQUIRE_VERB_RE = re.compile(
+    r"\bacquir\w*\b|\bto acquire\b|\bmerger\b|\bto merge\b|\btakeover\b|\bbuyout\b",
+    re.IGNORECASE,
+)
+
+# 전략적 제휴/합작투자/라이선싱은 원칙적으로 방향을 정하지 않는다(bidirectional).
+# 공급·고객 계약은 헤드라인만으로 공급자/고객 중 누가 상대인지 확정할 수 없어 unknown —
+# "불명확하면 unknown" 원칙(관계 유형과 방향 규칙)을 그대로 따른다. M&A는 함수로 개별 판정.
+_TYPE_DIRECTION = {
+    "공급·고객 계약": "unknown",
+    "합작투자": "bidirectional",
+    "라이선싱": "bidirectional",
+    "전략적 제휴": "bidirectional",
+}
+
+
+def _mna_direction(raw_headline, match_pos):
+    if match_pos is None:
+        return "unknown"
+    m = _ACQUIRE_VERB_RE.search(raw_headline)
+    if not m:
+        return "unknown"
+    return "outbound" if m.start() < match_pos else "inbound"
 
 
 def match_counterparties(corporate_events, known_companies, exclude_ticker=None):
@@ -282,9 +314,9 @@ def match_counterparties(corporate_events, known_companies, exclude_ticker=None)
     (원본 대소문자 그대로 비교, 3자 미만 티커는 "ON"/"U"처럼 흔한 단어와 겹쳐 제외).
     한 헤드라인이 여러 회사와 매칭되면(다자간 계약 등) 회사마다 별도 엣지를 만든다 —
     스킵하면 실제 관계를 그래프에서 누락시키기 때문.
-    각 엣지에 relationship_type(세분화된 유형)/status(진행상태)/evidence_level(근거 수준,
-    지금은 전부 뉴스 기반이라 상수)을 붙여 반환 — 전부 새 API 호출 없이 기존 헤드라인
-    텍스트만 다시 훑어서 계산."""
+    각 엣지에 relationship_type(세분화된 유형)/direction(방향, 확실할 때만)/status(진행상태)/
+    evidence_grade("C" — 뉴스 기반 고정)/evidence_level/source_kind("뉴스")를 붙여 반환 —
+    전부 새 API 호출 없이 기존 헤드라인 텍스트만 다시 훑어서 계산."""
     exclude_ticker = (exclude_ticker or "").upper()
     candidates = []
     for kc in known_companies:
@@ -307,27 +339,46 @@ def match_counterparties(corporate_events, known_companies, exclude_ticker=None)
             if label not in type_labels:
                 type_labels.append(label)
         relationship_type = ", ".join(type_labels)
+        primary_type = type_labels[0]
         status = _classify_relationship_status(headline)
         for cp_ticker, cp_name, tokens in candidates:
             name_match = bool(tokens) and all(
                 re.search(r"\b" + re.escape(tok) + r"\b", headline) for tok in tokens
             )
-            ticker_match = len(cp_ticker) >= 3 and re.search(
-                r"\b" + re.escape(cp_ticker) + r"\b", raw_headline
-            )
-            if name_match or ticker_match:
+            ticker_tm = None
+            if len(cp_ticker) >= 3:
+                ticker_tm = re.search(r"\b" + re.escape(cp_ticker) + r"\b", raw_headline)
+            if name_match or ticker_tm:
+                # 방향 판정용 매칭 위치 — 티커 매칭이 있으면 그 위치, 없으면 이름 토큰의
+                # 첫 매칭 위치. 둘 다 없으면(이론상 불가, name_match가 True인 이상 토큰이
+                # 있음) None으로 두어 _mna_direction이 unknown으로 폴백하게 한다.
+                if ticker_tm:
+                    match_pos = ticker_tm.start()
+                else:
+                    tok_m = re.search(r"\b" + re.escape(tokens[0]) + r"\b", headline)
+                    match_pos = tok_m.start() if tok_m else None
+                if primary_type == "M&A":
+                    direction = _mna_direction(raw_headline, match_pos)
+                else:
+                    direction = _TYPE_DIRECTION.get(primary_type, "unknown")
                 edges.append({
                     "counterparty_ticker": cp_ticker,
                     "counterparty_name": cp_name,
                     "relationship_type": relationship_type,
+                    "direction": direction,
                     "status": status,
+                    "evidence_grade": "C",
                     "evidence_level": "뉴스 보도 기반 (공식 확인 아님)",
+                    "source_kind": "뉴스",
                     "headline": ev.get("headline"),
                     "url": ev.get("url"),
                     "datetime": ev.get("datetime"),
                     # Finnhub가 이미 주는 기사 요약 — 헤드라인보다 실제 계약 내용을 더
                     # 구체적으로 담고 있는 경우가 많아 hover에서 우선 표시(lib/charts.py)
                     "context": ev.get("summary") or None,
+                    "ownership_pct": None,
+                    "transaction_value": None,
+                    "extraction_method": "rule",
                 })
     return edges
 

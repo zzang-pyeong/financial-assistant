@@ -22,10 +22,10 @@ edges = []
 for i in range(15):
     cp = f"CP{i:02d}"
     for j in range(i % 3 + 1):                     # 회사마다 근거 1~3건
-        edges.append(edge(cp, f"Company {i} Inc.", "공시상 언급", "공시 확인",
+        edges.append(edge(cp, f"Company {i} Inc.", "공시 내 언급", "미확인",
                           1_700_000_000 + i * 1000 + j, f"https://sec.gov/{cp}/{j}",
                           context=f"...supply agreement with Company {i}..."))
-edges.append(edge("CP00", "Company 0 Inc.", "인수합병(M&A)", "철회·무산",
+edges.append(edge("CP00", "Company 0 Inc.", "M&A", "철회·무산",
                   1_750_000_000, "https://news/CP00"))
 edges.append(edge("CP01", "Company 1 Inc.", "공급 계약", "체결·진행",
                   1_760_000_000, "https://news/CP01"))
@@ -88,11 +88,11 @@ print(f"5) 그래프 렌더 OK: 상대기업 {len(grouped)}개 전부 표시(더
 assert isinstance(node_traces[0].marker.size, (int, float)), "노드 크기가 개수에 따라 달라짐"
 print(f"6) 노드 크기 균일 OK (원칙 B — 근거 수를 크기로 집계하지 않음)")
 
-# 7) 근거 표 행 생성 — 6번째 원소(relationship_type)로 소스 판정
+# 7) 근거 표 행 생성 — 6번째 원소(relationship_type)로 소스 판정, 7·8번째(등급/소스)도 있는지
 detail = []
 for cp, g in grouped:
-    for dt, headline, url, status, context, rel_type in g["headlines"]:
-        detail.append(("SEC 공시" if rel_type == "공시상 언급" else "뉴스", url, context or headline))
+    for dt, headline, url, status, context, rel_type, grade, source_kind in g["headlines"]:
+        detail.append(("SEC 공시" if rel_type == "공시 내 언급" else "뉴스", url, context or headline))
 assert len(detail) == len(edges), f"근거 표 행 수 불일치: {len(detail)} vs {len(edges)}"
 assert all(u for _, u, _ in detail), "원문 링크가 빠진 행 있음"
 news_rows = sum(1 for s, _, _ in detail if s == "뉴스")

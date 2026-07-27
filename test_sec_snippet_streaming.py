@@ -1,9 +1,13 @@
-"""SEC 공시 스니펫 추출의 스트리밍 조기 종료 검증 (2026-07-27).
+"""SEC 공시 스니펫 추출의 스트리밍 스캔·문장 다듬기·후보 스코어링 검증 (2026-07-27).
 
 실제 SEC를 호출하지 않고 requests.get을 가짜로 갈아끼워, 6MB짜리 가짜 10-K에서
-(1) 회사명을 찾는 즉시 연결을 끊는지 — 실제로 몇 바이트만 읽고 멈추는지
+(1) 매칭 후보를 모을 만큼만 읽고 멈추는지(_CANDIDATE_SCAN_BYTES 상한) — 문서 전체를
+    받지는 않지만, 첫 매칭에서 곧바로 멈추던 예전보다는 더 읽는다는 트레이드오프를 반영
 (2) 청크 경계에 태그/회사명이 걸쳐도 스니펫이 깨지지 않는지
 (3) 언급이 없으면 문서를 다 훑고도 None을 돌려주는지
+(4)~(6) 문장 경계에서 다듬는지(단어 중간 절단 방지)
+(7) 매칭이 여럿일 때 실제 거래 내용을 설명하는 문장을 고르는지(경쟁사 나열·Risk Factors
+    회피) — 첫 매칭이 아니라 점수가 가장 높은 문장을 고르는 게 이번 개선의 핵심
 를 확인한다."""
 import sys
 sys.path.insert(0, "webapp")
@@ -56,17 +60,22 @@ def fake_get(url, **kwargs):
 
 sec_filings.requests.get = fake_get
 
-# --- 1) 조기 종료 -----------------------------------------------------------------
+# --- 1) 스캔 상한 -----------------------------------------------------------------
+# 이 가짜 문서엔 회사명이 딱 한 번만 나오므로, 매칭 후보를 더 모으려고 계속 읽다가
+# _CANDIDATE_SCAN_BYTES(약 1.5MB)에서 멈춰야 한다 — 문서 전체(6.9MB)를 받지는 않지만,
+# 첫 매칭 지점에서 곧바로 끊던 예전보다는 더 읽는다(여러 후보를 모아야 하니 트레이드오프).
 sec_filings._SNIPPET_CACHE.clear()
 snippet = sec_filings._extract_context_snippet(
     "http://fake/10k.htm", "Taiwan Semiconductor Manufacturing Company Limited",
 )
 read_mb = last_response["r"].bytes_read / 1024 / 1024
 total_mb = len(FAKE_10K.encode()) / 1024 / 1024
+cap_mb = sec_filings._CANDIDATE_SCAN_BYTES / 1024 / 1024
 assert snippet, "스니펫을 못 뽑음"
-print(f"\n1) 조기 종료: 전체 {total_mb:.1f}MB 중 {read_mb:.2f}MB만 읽고 중단 "
-      f"({read_mb/total_mb*100:.1f}%)")
-assert read_mb < total_mb * 0.1, f"조기 종료 실패 — {read_mb:.2f}MB나 읽음"
+print(f"\n1) 스캔 상한: 전체 {total_mb:.1f}MB 중 {read_mb:.2f}MB만 읽고 중단 "
+      f"({read_mb/total_mb*100:.1f}%, 상한 {cap_mb:.1f}MB)")
+assert read_mb < total_mb * 0.5, f"문서를 절반 넘게 읽음 — 상한이 안 걸림: {read_mb:.2f}MB"
+assert read_mb <= cap_mb + 0.1, f"후보 스캔 상한을 넘겨서 읽음: {read_mb:.2f}MB > {cap_mb:.1f}MB"
 
 # --- 2) 스니펫 품질 ---------------------------------------------------------------
 print(f"\n2) 뽑힌 스니펫:\n   {snippet}\n")
@@ -91,13 +100,12 @@ sec_filings._extract_context_snippet("http://fake/10k.htm", "Taiwan Semiconducto
 assert last_response["r"] is None, "캐시 적중인데 다시 요청함"
 print(f"4) 캐시 OK — 두 번째 호출은 네트워크 요청 0회")
 
-# --- 5) 이전 구현 대비 다운로드량 -----------------------------------------------------
-# ⚠️ 아래 배율은 이 가짜 문서 기준이다. 실제 NVDA 10-K 본문(nvda-20260125.htm)은 약 1.9MB이고
-# (SEC 공시 인덱스에서 확인), 11MB로 표시되는 건 XBRL까지 포함한 complete submission 파일이다.
-# 우리가 받는 URL은 본문 쪽이므로 실제 절감폭은 "20건 x 1.9MB ≈ 38MB → 10건 x 조기종료분"이다.
+# --- 5) 문서 전체 대비 절감폭 -------------------------------------------------------
+# ⚠️ 아래 배율은 이 가짜 문서 기준이다. 실제 10-K 본문은 보통 1~2MB대라, 후보 스캔 상한
+# (1.5MB)에 걸려도 대부분 문서 전체보다는 적게 읽는다 — 다만 첫 매칭에서 곧바로 멈추던
+# 예전(2.7%)보다는 훨씬 많이 읽는다는 게 이번 개선의 트레이드오프다.
 ratio = read_mb / total_mb
-print(f"\n5) 조기 종료 비율 {ratio*100:.1f}% — 실제 10-K 본문 1.9MB 기준으로 환산하면 "
-      f"상위 20건 {1.9*20:.0f}MB → 상위 10건 {1.9*ratio*10:.1f}MB 수준")
+print(f"\n5) 문서 전체 대비 {ratio*100:.1f}%만 읽음 (전체 대비 절감은 유지, 예전 조기종료보단 더 읽음)")
 
 print("\n전부 통과")
 
@@ -151,3 +159,51 @@ assert len(sentence3) <= sec_filings._MAX_SENTENCE_CHARS + 1, f"상한보다 길
 print(f"6c) 긴 문장 상한 절단 OK ({len(sentence3)}자): 끝부분 {sentence3[-40:]!r}")
 
 print("\n문장 경계 다듬기 전부 통과")
+
+# --- 7) 여러 매칭 후보 중 실제 거래 내용을 고르는지 (2026-07-27 추가) -----------------
+# 실측(RDW 검색)에서 첫 매칭이 전부 "we compete against ... including Airbus" 같은
+# Risk Factors 경쟁사 나열이었던 문제를 재현 — 경쟁사 나열(먼저 나옴, 노이즈 키워드
+# 포함) vs 실제 계약 설명(나중에 나옴, 금액·연도·계약 키워드 포함) 두 문장을 같은
+# 문서에 넣고, 점수가 높은(=실제 계약을 설명하는) 쪽을 고르는지 확인한다.
+NOISE_SENTENCE = "We compete against several providers, including Widget Corp, in various end markets."
+DEAL_SENTENCE = (
+    "In 2028, the Company entered into a $30 million supply agreement with Widget Corp "
+    "for advanced components."
+)
+MULTI_DOC = (
+    "<p>Item 1A. Risk Factors. " + ("Boilerplate risk language. " * 50)
+    + NOISE_SENTENCE + " " + ("More boilerplate risk language. " * 300)
+    + "</p><p>Item 1. Business. " + DEAL_SENTENCE
+    + (" Filler business language." * 300) + "</p>"
+)
+assert NOISE_SENTENCE in MULTI_DOC and DEAL_SENTENCE in MULTI_DOC
+
+def fake_get_multi(url, **kwargs):
+    assert kwargs.get("stream") is True
+    resp = FakeResponse(MULTI_DOC)
+    last_response["r"] = resp
+    return resp
+
+sec_filings.requests.get = fake_get_multi
+sec_filings._SNIPPET_CACHE.clear()
+picked = sec_filings._extract_context_snippet("http://fake/multi.htm", "Widget Corp")
+sec_filings.requests.get = fake_get  # 이후 테스트를 위해 원래 fake로 복원
+assert picked, "매칭 후보에서 스니펫을 못 뽑음"
+assert "$30 million" in picked and "supply agreement" in picked, \
+    f"경쟁사 나열이 아니라 실제 계약 문장을 골라야 하는데 못 골랐음: {picked!r}"
+assert "compete against" not in picked, f"경쟁사 나열 문장이 선택됨: {picked!r}"
+print(f"7) 여러 후보 중 실제 계약 문장 선택 OK: {picked!r}")
+
+# 7b) _score_sentence 자체도 단독으로 — 노이즈 문장보다 계약 문장 점수가 더 높은지,
+# Risk Factors 섹션 근처라는 사실만으로도 감점되는지
+noise_pos = MULTI_DOC.index(NOISE_SENTENCE)
+deal_pos = MULTI_DOC.index(DEAL_SENTENCE)
+noise_score = sec_filings._score_sentence(NOISE_SENTENCE, MULTI_DOC, noise_pos)
+deal_score = sec_filings._score_sentence(DEAL_SENTENCE, MULTI_DOC, deal_pos)
+assert deal_score > noise_score, f"계약 문장 점수가 더 높아야 함: 계약={deal_score}, 경쟁사={noise_score}"
+assert sec_filings._section_penalty(MULTI_DOC, noise_pos) < 0, "Risk Factors 섹션 감점이 안 걸림"
+assert sec_filings._section_penalty(MULTI_DOC, deal_pos) == 0, "Business 섹션인데 감점됨"
+print(f"7b) 스코어링 세부 확인 OK: 계약 문장 {deal_score}점 > 경쟁사 나열 {noise_score}점 "
+      f"(Risk Factors 섹션 감점 반영)")
+
+print("\n후보 스코어링 전부 통과")

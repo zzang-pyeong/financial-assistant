@@ -10,8 +10,15 @@
 ⚠️ 일반적인 관계 유형 문구("supply agreement", "strategic partnership")를 그대로
 검색하면 거의 안 걸림(실측: NVDA 최근 2년 "supply agreement" 검색 0건) — 공시는 격식체
 언어를 써서 뉴스와 다른 어휘를 씀. 그래서 문구 매칭이 아니라 "상대 회사 이름 자체가
-본문에 등장하는지"로 검색한다. 대신 정밀 관계 유형·방향성은 알 수 없음 — "공시상 언급"
-까지만 표시하고, 실제 문맥은 사용자가 링크를 눌러 원문에서 직접 확인해야 한다(과확신 방지).
+본문에 등장하는지"로 검색한다. 대신 정밀 관계 유형·방향성은 알 수 없음 — "공시 내 언급"
+(근거 등급 D, 기본 화면에서는 숨김)까지만 표시하고, 실제 문맥은 사용자가 링크를 눌러
+원문에서 직접 확인해야 한다(과확신 방지).
+
+2026-07-27 추가: Exhibit 21(자회사 목록)과 Schedule 13D/13G(대량 지분 보유)는 반대로
+근거 등급 A — 구조화된 SEC 공식 문서에서 관계를 직접 명시하기 때문(추측이 아니라 문서에
+적힌 그대로). 이 둘은 일반 언급 검색과 달리 소량(회사당 최대 30개 자회사, 최근 2년
+13D/13G)만 조회하고 실패 시 조용히 빈 리스트를 반환한다(find_subsidiaries,
+find_beneficial_owners 참고).
 """
 
 import codecs
@@ -102,6 +109,34 @@ def _get_ticker_cik_map():
 
 def get_cik(ticker):
     return _get_ticker_cik_map().get((ticker or "").upper())
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_name_to_ticker_map():
+    """등록회사명(정규화) → 티커. 자회사(Exhibit 21)나 13D/13G 보고자 이름을 상장 티커로
+    되짚어보려 할 때 쓴다 — 대부분 실패하는 게 정상이다(자회사는 대개 비상장, 13D/13G
+    보고자도 개인·비상장 펀드가 흔함). company_tickers.json은 이미 _get_ticker_cik_map()도
+    받는 같은 파일이라 요청이 중복되지만, 둘 다 하루 캐시라 실질 비용은 작다."""
+    try:
+        r = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers={"User-Agent": _USER_AGENT}, timeout=10,
+        )
+        data = r.json()
+        return {
+            re.sub(r"[^a-z0-9]", "", row["title"].lower()): row["ticker"].upper()
+            for row in data.values() if row.get("title")
+        }
+    except Exception:
+        return {}
+
+
+def _match_known_ticker(name):
+    """회사명으로 상장 티커를 찾는다. 못 찾으면 빈 문자열 — 티커를 추측해 채우지 않는다."""
+    if not name:
+        return ""
+    key = re.sub(r"[^a-z0-9]", "", name.lower())
+    return _get_name_to_ticker_map().get(key, "")
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -247,18 +282,365 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
                 edges.append({
                     "counterparty_ticker": cp_ticker,
                     "counterparty_name": cp_name,
-                    "relationship_type": "공시상 언급",
-                    "status": "공시 확인",
+                    "relationship_type": "공시 내 언급",
+                    "direction": "unknown",
+                    "status": "미확인",
+                    "evidence_grade": "D",
                     "evidence_level": evidence_level,
+                    "source_kind": "SEC 공시",
                     "headline": headline,
                     "url": _filing_url(doc_cik, hit),
                     "datetime": _file_date_to_epoch(hit["file_date"]),
                     "snippet_query_name": snippet_name,
+                    "ownership_pct": None,
+                    "transaction_value": None,
+                    "extraction_method": "mention",
                 })
             done += 1
             if on_progress:
                 on_progress(done, total)
     return edges
+
+
+# ---------------------------------------------------------------------------
+# Exhibit 21 자회사 목록 — 구조화된 SEC 공식 문서라 근거 등급 A. 최근 10-K의 EX-21
+# 첨부문서를 찾아 표를 파싱한다. 형식이 필사마다 다른데(표 vs 텍스트 나열) 표 형식만
+# 지원한다 — 못 찾거나 파싱에 실패하면 조용히 빈 리스트를 반환해서, 이 기능이 실패해도
+# 관계도 나머지가 깨지지 않게 한다(지시서 원칙: 부분 실패를 조용히 처리).
+# ---------------------------------------------------------------------------
+_MAX_SUBSIDIARIES = 30
+_TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
+_CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
+_SUBSIDIARY_HEADER_RE = re.compile(
+    r"^name$|name of (the )?subsidiar|jurisdiction|state of incorporation|"
+    r"where incorporated|incorporated in|organized under",
+    re.IGNORECASE,
+)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_recent_10k_accession(cik):
+    """CIK의 가장 최근 10-K (accession number, 제출일) — SEC submissions API는 회사당
+    최근 제출 이력을 통째로 주므로(무료·키 불필요) 이걸로 최신 연차보고서를 찾는다."""
+    if not cik:
+        return None, None
+    try:
+        r = requests.get(
+            f"https://data.sec.gov/submissions/CIK{cik}.json",
+            headers={"User-Agent": _USER_AGENT}, timeout=10,
+        )
+        recent = r.json().get("filings", {}).get("recent", {})
+        for form, accession, fdate in zip(
+            recent.get("form", []), recent.get("accessionNumber", []),
+            recent.get("filingDate", []),
+        ):
+            if form == "10-K":
+                return accession, fdate
+    except Exception:
+        pass
+    return None, None
+
+
+_INDEX_HREF_RE = re.compile(r'href="([^"]+)"', re.IGNORECASE)
+
+
+def _list_filing_documents(cik, accession):
+    """공시 하나(accession)의 "Document Format Files" 표에서 [{"name":, "type":}, ...]를
+    뽑는다. 디렉터리 인덱스(index.json)의 "type" 필드는 실제 문서 타입이 아니라 아이콘
+    힌트일 뿐이라서(실측: NVDA 10-K에서 htm 파일 전부가 "text.gif") 못 쓴다 — 사람이 보는
+    -index.htm 표에만 진짜 Exhibit 타입(예: "EX-21.1")이 있어서 이걸 파싱한다."""
+    if not cik or not accession:
+        return []
+    try:
+        cik_no_padding = str(int(cik))
+        accession_no_dashes = accession.replace("-", "")
+        url = (
+            f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/"
+            f"{accession_no_dashes}/{accession}-index.htm"
+        )
+        r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=10)
+        text = r.text
+    except Exception:
+        return []
+
+    docs = []
+    for tr in _TR_RE.finditer(text):
+        cells_html = _CELL_RE.findall(tr.group(1))
+        if len(cells_html) < 4:
+            continue
+        href_m = _INDEX_HREF_RE.search(cells_html[2])
+        if not href_m:
+            continue
+        name = href_m.group(1).rsplit("/", 1)[-1]
+        doc_type = _clean_fragment(cells_html[3]).strip()
+        if name:
+            docs.append({"name": name, "type": doc_type})
+    return docs
+
+
+def _parse_subsidiary_rows(html_text):
+    """Exhibit 21 HTML에서 표 행을 파싱해 [(이름, 관할), ...]로 반환. 표가 아니면(텍스트
+    나열형 등) 빈 리스트 — 이번 범위에서는 표 형식만 지원한다."""
+    rows = []
+    for tr in _TR_RE.finditer(html_text):
+        cells = [_clean_fragment(c).strip() for c in _CELL_RE.findall(tr.group(1))]
+        cells = [c for c in cells if c]
+        if not cells:
+            continue
+        # 제목행("Subsidiaries of Registrant...")과 실제 헤더행("Name of Subsidiary" |
+        # "State... of Incorporation")이 셀만 다를 뿐 같은 <tr>에 같이 들어있는 경우가
+        # 있어(실측: NVDA), 첫 셀만 보면 못 거른다 — 행의 모든 셀을 검사한다.
+        if any(_SUBSIDIARY_HEADER_RE.search(c) for c in cells):
+            continue
+        name = cells[0]
+        jurisdiction = cells[1] if len(cells) > 1 else ""
+        if len(name) >= 2 and not name.replace(".", "").isdigit():
+            rows.append((name, jurisdiction))
+    return rows
+
+
+def find_subsidiaries(ticker):
+    """최근 10-K의 Exhibit 21(자회사 목록)에서 자회사명·관할을 추출해 표준 스키마 엣지로
+    반환한다. (엣지 목록, 잘렸는지 여부) 튜플. 상장 티커를 찾을 수 있으면 매핑하고, 못
+    찾으면 counterparty_ticker=""(회사명만 표시, 추측해 채우지 않음). 30개를 넘으면
+    앞에서부터 30개만 반환하고 잘렸다고 표시한다. 어느 단계든 실패하면 ([], False)."""
+    cik = get_cik(ticker)
+    accession, filing_date = _get_recent_10k_accession(cik)
+    if not accession:
+        return [], False
+
+    docs = _list_filing_documents(cik, accession)
+    exhibit = next((d for d in docs if d["type"].upper().startswith("EX-21")), None)
+    if not exhibit:
+        exhibit = next(
+            (d for d in docs if re.search(r"ex[\-_]?21", d["name"], re.IGNORECASE)), None,
+        )
+    if not exhibit or not exhibit.get("name"):
+        return [], False
+
+    cik_no_padding = str(int(cik))
+    accession_no_dashes = accession.replace("-", "")
+    url = (
+        f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/"
+        f"{accession_no_dashes}/{exhibit['name']}"
+    )
+    try:
+        r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=15)
+        rows = _parse_subsidiary_rows(r.text)
+    except Exception:
+        return [], False
+
+    truncated = len(rows) > _MAX_SUBSIDIARIES
+    rows = rows[:_MAX_SUBSIDIARIES]
+    filing_dt = _file_date_to_epoch(filing_date) if filing_date else None
+
+    edges = []
+    for name, jurisdiction in rows:
+        detail = f" ({jurisdiction} 법인)" if jurisdiction else ""
+        edges.append({
+            "counterparty_ticker": _match_known_ticker(name),
+            "counterparty_name": name,
+            "relationship_type": "자회사",
+            "direction": "outbound",
+            "status": "진행",
+            "evidence_grade": "A",
+            "evidence_level": "공식 SEC Exhibit 21 (자회사 목록)",
+            "source_kind": "SEC 공시",
+            "headline": f"Exhibit 21 자회사 목록에 등재{detail}",
+            "context": None,
+            "url": url,
+            "datetime": filing_dt,
+            "ownership_pct": None,
+            "transaction_value": None,
+            "extraction_method": "rule",
+        })
+    return edges, truncated
+
+
+# ---------------------------------------------------------------------------
+# Schedule 13D/13G 대량 지분 보유 — 구조화된 SEC 공식 문서라 근거 등급 A. 보고자
+# (reporting person) 이름과 지분율을 문서 원문에서 정규식으로 추출한다. 표지 페이지
+# 형식이 필사마다 달라 이름을 못 찾으면 그 건은 조용히 건너뛴다(가짜 근거를 만들지
+# 않는다는 지시서 원칙 7). 13F(일반 운용 보유)·Form 3/4/5(내부자)는 지시서에 따라
+# 전략적 투자 관계로 오해될 수 있어 이번 범위에서 다루지 않는다.
+# ---------------------------------------------------------------------------
+_MAX_OWNERSHIP_FILINGS = 15
+_ATOM_ENTRY_RE = re.compile(r"<entry>(.*?)</entry>", re.DOTALL | re.IGNORECASE)
+_ATOM_FIELD_RES = {
+    "type": re.compile(r"<filing-type>(.*?)</filing-type>", re.IGNORECASE),
+    "date": re.compile(r"<filing-date>(.*?)</filing-date>", re.IGNORECASE),
+    "accession": re.compile(r"<accession-number>(.*?)</accession-number>", re.IGNORECASE),
+}
+# SC 13D/13G 표지 페이지의 "NAMES OF REPORTING PERSONS" 항목 뒤에 오는 이름을 잡는다.
+# 표 형식·줄바꿈이 필사마다 달라 완벽하지 않다 — 못 찾으면 그 건은 건너뛴다.
+# 이름 뒤 정지 지점을 룩어헤드로 둔다(소비하지 않음) — 실측(RDW 13G)에서 다음 필드가
+# "2 CHECK THE APPROPRIATE BOX"처럼 예상 못한 문구로 시작해서 원래 "CHECK IF"만 찾던
+# 패턴이 실패했다. 표지 페이지는 매 필드가 "<번호> <대문자 라벨>"로 시작하는 게
+# 공통이라(2 CHECK.../3 SEC.../4 CITIZENSHIP...), 그 패턴을 우선 정지 조건으로 쓴다.
+_REPORTING_PERSON_RE = re.compile(
+    r"NAMES?\s+OF\s+REPORTING\s+PERSONS?[.:\s]*([A-Z][A-Za-z0-9&.,'\-\s]{2,80}?)"
+    r"(?=\s+\(?\d{1,2}\)?\s+[A-Z]|\s+S\.?S\.?\s+OR|\s+I\.?R\.?S\.?|\s+CHECK|$)",
+    re.IGNORECASE,
+)
+# 실측(NVDA 13G/A): 요즘 상당수 13D/13G가 고전적인 표지 문구 대신 XBRL에서 뽑아낸
+# "Item 1: Reporting Person - FMR LLC ... Item 11: 4.069%" 형태의 압축된 텍스트를 쓴다
+# ("PERCENT OF CLASS" 같은 설명 문구 자체가 없음) — 이 형식을 위한 대체 패턴.
+_REPORTING_PERSON_ALT_RE = re.compile(
+    r"Reporting\s+Person\s*-\s*([A-Z][A-Za-z0-9&.,'\-\s]{2,80}?)\s*(?:Item\s*2|$)",
+    re.IGNORECASE,
+)
+_PERCENT_OF_CLASS_RE = re.compile(
+    # "ROW (9)"처럼 라벨과 실제 숫자 사이에 행 번호(숫자)가 섞여 있어 숫자를 무조건
+    # 배제하면 못 찾는다 — 실측(RDW 13G)으로 확인. 대신 아무 문자나 허용하고(비탐욕)
+    # "숫자(.숫자)? %" 패턴이 나오는 첫 지점을 잡는다.
+    r"PERCENT\s+OF\s+CLASS.{0,100}?(\d{1,2}(?:\.\d+)?)\s*%", re.IGNORECASE | re.DOTALL,
+)
+_PERCENT_ITEM11_RE = re.compile(r"Item\s*11:\s*(\d{1,2}(?:\.\d+)?)\s*%", re.IGNORECASE)
+_OWNERSHIP_ENDED_RE = re.compile(
+    r"no longer beneficially owns|ceased to be the beneficial owner|has sold",
+    re.IGNORECASE,
+)
+
+
+def _extract_pattern(pattern, text, default=None):
+    m = pattern.search(text)
+    return html.unescape(m.group(1)).strip() if m else default
+
+
+def _list_13d_13g_filings(cik, lookback_days=730):
+    """대상 CIK가 issuer인 최근 lookback_days 안의 Schedule 13D/13G(및 /A 정정) 목록을
+    EDGAR 회사별 공시 이력(Atom feed)에서 가져온다. 전문검색 API(_search_filings_for_company
+    가 쓰는 것)는 검색어가 필수라 이 용도에 안 맞아서, 검색어 없이 "이 회사 관련 이 유형의
+    공시 전부"를 주는 이 엔드포인트를 대신 쓴다."""
+    if not cik:
+        return []
+    cutoff = date.today() - timedelta(days=lookback_days)
+    seen = set()
+    filings = []
+    for form_type in ("SC 13D", "SC 13G"):
+        try:
+            r = requests.get(
+                "https://www.sec.gov/cgi-bin/browse-edgar",
+                params={
+                    "action": "getcompany", "CIK": cik, "type": form_type,
+                    "dateb": "", "owner": "include", "count": 100, "output": "atom",
+                },
+                headers={"User-Agent": _USER_AGENT}, timeout=10,
+            )
+            text = r.text
+        except Exception:
+            continue
+        for m in _ATOM_ENTRY_RE.finditer(text):
+            block = m.group(1)
+            accession = _extract_pattern(_ATOM_FIELD_RES["accession"], block)
+            fdate = _extract_pattern(_ATOM_FIELD_RES["date"], block)
+            if not accession or accession in seen:
+                continue
+            if fdate:
+                try:
+                    if datetime.strptime(fdate, "%Y-%m-%d").date() < cutoff:
+                        continue
+                except Exception:
+                    pass
+            seen.add(accession)
+            filings.append({
+                "accession": accession,
+                "form": _extract_pattern(_ATOM_FIELD_RES["type"], block) or form_type,
+                "date": fdate,
+            })
+    filings.sort(key=lambda f: f.get("date") or "", reverse=True)
+    return filings[:_MAX_OWNERSHIP_FILINGS]
+
+
+def _primary_document_url(cik, accession):
+    docs = _list_filing_documents(cik, accession)
+    primary = next(
+        (d for d in docs if d["type"].upper().startswith(("SC 13D", "SC 13G"))), None,
+    )
+    if not primary:
+        primary = next(
+            (d for d in docs if d["name"].lower().endswith((".htm", ".html", ".txt"))), None,
+        )
+    if not primary:
+        return None
+    cik_no_padding = str(int(cik))
+    accession_no_dashes = accession.replace("-", "")
+    return (
+        f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/"
+        f"{accession_no_dashes}/{primary['name']}"
+    )
+
+
+def _process_13d_13g_filing(cik, filing):
+    url = _primary_document_url(cik, filing["accession"])
+    if not url:
+        return None
+    try:
+        r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=15)
+        cleaned = _clean_fragment(r.text)
+    except Exception:
+        return None
+
+    name = (
+        _extract_pattern(_REPORTING_PERSON_RE, cleaned)
+        or _extract_pattern(_REPORTING_PERSON_ALT_RE, cleaned)
+    )
+    if not name:
+        return None
+    pct_str = (
+        _extract_pattern(_PERCENT_OF_CLASS_RE, cleaned)
+        or _extract_pattern(_PERCENT_ITEM11_RE, cleaned)
+    )
+    pct = None
+    if pct_str:
+        try:
+            pct = float(pct_str)
+        except ValueError:
+            pct = None
+    status = "완료" if _OWNERSHIP_ENDED_RE.search(cleaned) else "진행"
+
+    return {
+        "counterparty_ticker": _match_known_ticker(name),
+        "counterparty_name": name,
+        "relationship_type": "지분 투자·보유",
+        "direction": "inbound",
+        "status": status,
+        "evidence_grade": "A",
+        "evidence_level": "SEC Schedule 13D/13G 대량 지분 보유 공시",
+        "source_kind": "SEC 공시",
+        "headline": (
+            f"{filing['form']} ({filing['date']}) — {name}"
+            + (f", 지분 {pct:.1f}%" if pct is not None else "")
+        ),
+        "context": None,
+        "url": url,
+        "datetime": _file_date_to_epoch(filing["date"]) if filing.get("date") else None,
+        "ownership_pct": pct,
+        "transaction_value": None,
+        "extraction_method": "rule",
+    }
+
+
+def find_beneficial_owners(ticker):
+    """최근 2년 Schedule 13D/13G에서 보고자(reporting person)와 지분율을 추출해 표준
+    스키마 엣지로 반환한다. 보고자 이름을 못 찾으면(표지 페이지 형식 인식 실패) 그 건은
+    건너뛴다 — 이름 없는 엣지를 만들지 않는다. 지분율은 확실히 뽑힐 때만 채운다."""
+    cik = get_cik(ticker)
+    if not cik:
+        return []
+    filings = _list_13d_13g_filings(cik)
+    if not filings:
+        return []
+    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(filings))) as executor:
+        results = list(executor.map(lambda f: _process_13d_13g_filing(cik, f), filings))
+    ticker_upper = ticker.upper()
+    # 실측(PLTR): 발행회사 자신이 표지 페이지의 "NAMES OF REPORTING PERSONS"에 잘못 걸리는
+    # 문서가 있었다(자사주 관련 특수 케이스로 보임) — 자기 자신을 보유자로 표시하는 건
+    # 의미가 없으므로 걸러낸다.
+    return [
+        r for r in results
+        if r and (not r["counterparty_ticker"] or r["counterparty_ticker"] != ticker_upper)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -284,10 +666,17 @@ _ANY_TAG_RE = re.compile(r"<[^>]+>")
 # 표에서 "원문 확인 필요" 안내로 자연스럽게 폴백된다(pages/8_관계도.py::_best_description).
 _MAX_SNIPPET_COMPANIES = 10
 
-# 스트리밍 중 이 크기를 넘게 읽었는데도 회사명을 못 찾으면 포기한다(비정상적으로 큰
-# 첨부가 붙은 공시로부터 스스로를 보호). 실측상 회사명은 보통 앞쪽 수백 KB 안에 나온다.
+# 스트리밍 중 이 크기를 넘게 읽었는데도 회사명을 한 번도 못 찾으면 포기한다(비정상적으로
+# 큰 첨부가 붙은 공시로부터 스스로를 보호). 실측상 회사명은 보통 앞쪽 수백 KB 안에 나온다.
 _MAX_FILING_BYTES = 6 * 1024 * 1024
 _STREAM_CHUNK = 64 * 1024
+
+# 여러 매칭 후보를 모으기 위한 상한 — 첫 매칭에서 바로 멈추던 것보다는 더 읽어야 한다.
+# 그래도 6MB 안전장치보다는 훨씬 작게 잡아서(실측상 사업설명은 문서 앞쪽에 나옴) 대부분의
+# 문서는 이 안에서 여러 매칭을 확보하고 끝난다. 이 안에서 하나도 못 찾은 극히 일부 문서만
+# _MAX_FILING_BYTES까지 계속 읽어 최소 1건은 건지려 한다(재현율 유지).
+_CANDIDATE_SCAN_BYTES = 1_500_000
+_MAX_CANDIDATES = 6
 
 # 스니펫 캐시 — 제출된 공시는 내용이 안 바뀌므로 (url, 회사명) → 스니펫은 영구히 유효하다.
 # st.cache_data 대신 평범한 dict을 쓰는 이유는 위 주석 (3)번(워커 스레드 호출) 때문.
@@ -341,25 +730,86 @@ def _trim_to_sentence(text, match_start, match_len):
     return text.strip(), True, True
 
 
-def _stream_find_context(url, phrases, window=260):
-    """공시 문서를 스트리밍으로 받으면서 phrases 중 하나가 나오는 즉시 그 주변 ±window자를
-    모아 문장 단위로 다듬어 반환하고 연결을 끊는다. 못 찾으면 None.
+def _find_all_occurrences(tail, phrases, max_candidates):
+    """tail 안에서 phrases 중 하나라도 매칭되는 지점을 등장 순서대로 최대 max_candidates개
+    찾아 [(위치, 매칭길이), ...]로 반환. 여러 매칭 후보를 모아 그중 가장 그럴듯한 문장을
+    고르기 위한 것(아래 _score_sentence 참고) — 예전엔 첫 매칭에서 바로 멈췄다."""
+    lowered = [(p, p.lower()) for p in phrases]
+    low = tail.lower()
+    found = []
+    search_from = 0
+    while len(found) < max_candidates:
+        best = None
+        for phrase, phrase_low in lowered:
+            idx = low.find(phrase_low, search_from)
+            if idx != -1 and (best is None or idx < best[0]):
+                best = (idx, len(phrase))
+        if best is None:
+            break
+        found.append(best)
+        search_from = best[0] + best[1]
+    return found
 
-    전체를 받아 한 번에 처리하지 않는 이유는 위 모듈 주석 참조 — 10-K 한 건이 수 MB인데
-    실제로 쓰는 건 수백 자뿐이라, 찾은 시점에 멈추면 대부분의 문서에서 앞부분만 받고 끝난다."""
+
+# "관계도 표에 뭘 하는지 안 보인다"는 피드백에 문장 경계 정리(위)로 가독성은 나아졌지만,
+# 정확도 자체는 별개 문제였다 — 첫 매칭 문장이 실제 거래 내용이 아니라 Risk Factors의
+# 경쟁사 나열이나 소송 상대 언급인 경우가 흔했다(실측: RDW 검색 시 BA/NOC 매칭이 전부
+# "we compete against ... including Airbus" 같은 경쟁사 나열이었음). 여러 매칭 후보를
+# 모아 아래 신호로 점수를 매기고 가장 그럴듯한 문장을 고른다 — 완벽한 분류가 아니라
+# 근사 랭킹이라는 점은 여전하다.
+_DEAL_KEYWORDS_RE = re.compile(
+    r'\$[\d,.]+|\b\d{4}\b|\bagreements?\b|\bcontracts?\b|\bsupply\b|\bpartnerships?\b|'
+    r'\bjoint ventures?\b|\bcollaborat\w*\b|\blicens\w*\b|\btask orders?\b|'
+    r'\bpurchase orders?\b|\bmemorandum of understanding\b|\bacqui\w*\b|\bcustomers?\b|'
+    r'\bvendors?\b|\bsubcontract\w*\b|\bmillion\b|\bbillion\b',
+    re.IGNORECASE,
+)
+_NOISE_KEYWORDS_RE = re.compile(
+    r'\bcompet\w*\b|\blawsuit\b|\bplaintiffs?\b|\bdefendants?\b|\bcomplaints?\b|'
+    r'\balleg\w*\b|\blitigation\b',
+    re.IGNORECASE,
+)
+# 문장 앞쪽 이 정도 범위 안에서 가장 최근에 나온 "Item N" 헤더를 찾아 그 섹션 안에 있다고
+# 본다. 10-K/10-Q의 Item 1A(Risk Factors)·Item 3(Legal Proceedings)는 회사 이름이 실제
+# 거래 내용과 무관하게(경쟁사 나열, 소송 상대) 자주 등장하는 섹션이라 감점한다. 헤더
+# 형식이 필사마다 달라 완벽한 파서는 아니다 — 못 찾으면 그냥 감점 없이 넘어간다.
+_ITEM_HEADER_RE = re.compile(r'\bItem\s+(\d+(?:\.\d+)?[A-Za-z]?)\b', re.IGNORECASE)
+_NOISE_SECTION_ITEMS = {"1a", "3"}
+_SECTION_LOOKBACK = 4000
+
+
+def _section_penalty(tail, pos):
+    window_text = tail[max(0, pos - _SECTION_LOOKBACK):pos]
+    last_item = None
+    for m in _ITEM_HEADER_RE.finditer(window_text):
+        last_item = m.group(1).lower()
+    return -3 if last_item in _NOISE_SECTION_ITEMS else 0
+
+
+def _score_sentence(sentence, tail, pos):
+    """문장이 실제 거래 내용을 설명할 가능성을 근사 점수화 — 여러 매칭 후보 중 하나를
+    고르는 상대 비교용일 뿐, 절대적인 신뢰도 지표는 아니다."""
+    score = len(_DEAL_KEYWORDS_RE.findall(sentence))
+    score -= 2 * len(_NOISE_KEYWORDS_RE.findall(sentence))
+    score += _section_penalty(tail, pos)
+    return score
+
+
+def _stream_find_context(url, phrases, window=260):
+    """공시 문서를 스트리밍으로 받으며 phrases가 나오는 지점을 최대 _MAX_CANDIDATES개까지
+    모아(최대 _CANDIDATE_SCAN_BYTES, 하나도 못 찾았으면 _MAX_FILING_BYTES까지 계속),
+    그중 _score_sentence로 가장 그럴듯한 문장을 골라 반환한다. 못 찾으면 None.
+
+    예전엔 첫 매칭에서 바로 멈췄는데, 그러면 실제 거래 내용이 아니라 아무 문맥이나
+    뽑히기 쉬웠다(위 _score_sentence 설명 참조). 여러 후보를 모으려면 더 읽어야 해서
+    예전보다 느리다 — 첫 매칭 지점에서 바로 끊던 것과 다른 트레이드오프."""
     if not phrases:
         return None
-    longest = max(len(p) for p in phrases)
-    # 매칭 지점 앞쪽 문맥과, 청크 경계에 걸친 회사명을 놓치지 않을 만큼은 남겨둔다
-    keep = window + longest + 32
 
-    lowered = [(p, p.lower()) for p in phrases]
     tail = ""
     carry = ""
-    trimmed = False
-    found_at = None
-    found_len = 0
     total = 0
+    occurrences = []
 
     try:
         with requests.get(
@@ -376,41 +826,37 @@ def _stream_find_context(url, phrases, window=260):
                 carry = raw[cut:]
                 tail += _clean_fragment(raw[:cut])
 
-                if found_at is None:
-                    low = tail.lower()
-                    for phrase, phrase_low in lowered:
-                        idx = low.find(phrase_low)
-                        if idx != -1:
-                            found_at, found_len = idx, len(phrase)
-                            break
-
-                if found_at is not None:
-                    # 매칭 뒤쪽 문맥까지 다 모였으면 더 받을 이유가 없다 — 여기서 끊는다
-                    if len(tail) >= found_at + found_len + window:
-                        break
-                else:
-                    if len(tail) > keep:
-                        tail = tail[-keep:]
-                        trimmed = True
-                    if total > _MAX_FILING_BYTES:
-                        return None
+                occurrences = _find_all_occurrences(tail, phrases, _MAX_CANDIDATES)
+                if len(occurrences) >= _MAX_CANDIDATES:
+                    break
+                if occurrences and len(tail) >= _CANDIDATE_SCAN_BYTES:
+                    break
+                if total > _MAX_FILING_BYTES:
+                    break
     except Exception:
         return None
 
-    if found_at is None:
+    if not occurrences:
         return None
 
-    start = max(0, found_at - window)
-    end = min(len(tail), found_at + found_len + window)
-    raw = tail[start:end]
-    sentence, start_cut, end_cut = _trim_to_sentence(raw, found_at - start, found_len)
-    if len(sentence) > _MAX_SENTENCE_CHARS:
-        # 문장 하나가 너무 길면(법률 문서 특유의 장문) 단어 경계에서 자른다 — 그래도
-        # 통째로 한 문장이라 예전 고정폭 절단보다는 훨씬 자연스럽게 끝난다. 말줄임표는
-        # 아래 suffix가 한 번만 붙이므로 여기서는 자르기만 한다(안 그러면 "…"가 두 번 붙음).
-        sentence = sentence[:_MAX_SENTENCE_CHARS].rsplit(" ", 1)[0].rstrip(",;:")
-        end_cut = True
-    prefix = "…" if (start_cut and (start > 0 or trimmed)) else ""
+    candidates = []
+    for found_at, found_len in occurrences:
+        start = max(0, found_at - window)
+        end = min(len(tail), found_at + found_len + window)
+        raw = tail[start:end]
+        sentence, start_cut, end_cut = _trim_to_sentence(raw, found_at - start, found_len)
+        if len(sentence) > _MAX_SENTENCE_CHARS:
+            # 문장 하나가 너무 길면(법률 문서 특유의 장문) 단어 경계에서 자른다 — 그래도
+            # 통째로 한 문장이라 예전 고정폭 절단보다는 훨씬 자연스럽게 끝난다. 말줄임표는
+            # 아래에서 한 번만 붙이므로 여기서는 자르기만 한다(안 그러면 "…"가 두 번 붙음).
+            sentence = sentence[:_MAX_SENTENCE_CHARS].rsplit(" ", 1)[0].rstrip(",;:")
+            end_cut = True
+        candidates.append((sentence, start_cut, end_cut, found_at))
+
+    sentence, start_cut, end_cut, _pos = max(
+        candidates, key=lambda c: _score_sentence(c[0], tail, c[3]),
+    )
+    prefix = "…" if start_cut else ""
     suffix = "…" if end_cut else ""
     return prefix + sentence + suffix
 

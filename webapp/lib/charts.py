@@ -93,27 +93,35 @@ def render_price_chart_figure(df, period_days=None):
     return fig
 
 
+# 관계 유형 목록·이름은 관계도 표준 스키마(직원 지시서)에 맞춘다 — "M&A"는 예전
+# "인수합병(M&A)"의 축약형, "공급·고객 계약"은 "공급 계약"의 새 이름. 자회사·지분 투자·보유는
+# Exhibit 21·13D/13G 신규 추출(find_subsidiaries/find_beneficial_owners)에서만 나온다.
 _RELATIONSHIP_EDGE_COLORS = {
-    "인수합병(M&A)": "#e74c3c",
-    "공급 계약": "#2f6fed",
+    "자회사": "#27ae60",
+    "M&A": "#e74c3c",
+    "지분 투자·보유": "#e67e22",
+    "공급·고객 계약": "#2f6fed",
     "합작투자": "#8e44ad",
     "라이선싱": "#16a085",
     "전략적 제휴": "#f39c12",
-    "공시상 언급": "#6b7280",  # 뉴스 기반 5개 유형과 구분되는 중립 회색 — SEC 공시(lib/sec_filings.py)
+    "공시 내 언급": "#6b7280",  # 근거 등급 D — 나머지 7개 고신뢰 유형과 구분되는 중립 회색
 }
 # 노드 안쪽을 같은 색 계열의 아주 옅은 톤으로 채워 선-노드가 한 덩어리로 읽히게 한다.
 # 채도를 낮게 잡는 이유: 진하게 칠하면 색이 "유불리"를 암시하는 것처럼 보이는데, 여기서
 # 색은 관계 유형 구분일 뿐이다(원칙 B — 방향 색상 미사용).
 _RELATIONSHIP_NODE_FILLS = {
-    "인수합병(M&A)": "#fdecea",
-    "공급 계약": "#eaf1fe",
+    "자회사": "#eafaf1",
+    "M&A": "#fdecea",
+    "지분 투자·보유": "#fdf0e3",
+    "공급·고객 계약": "#eaf1fe",
     "합작투자": "#f3ecf8",
     "라이선싱": "#e8f6f3",
     "전략적 제휴": "#fef5e7",
-    "공시상 언급": "#f1f2f4",
+    "공시 내 언급": "#f1f2f4",
 }
 _RELATIONSHIP_HUB_COLOR = "#2f6fed"
 _TERMINATED_STATUS = "철회·무산"
+_EVIDENCE_GRADE_RANK = {"A": 3, "B": 2, "C": 1, "D": 0}
 # hover에 넣을 발췌문 길이. 220자였는데 줄바꿈을 넣으면 그것만 3~4줄이 되어 말풍선이
 # 그래프를 덮었다 — 전체 발췌문은 아래 근거 표에서 넉넉히 보므로 여기선 짧게 맛만 보인다.
 _MAX_PREVIEW_CHARS = 150
@@ -239,6 +247,33 @@ def _edge_endpoints(x, y):
     return start, end
 
 
+# 화살표 머리를 그릴 아주 짧은 구간의 길이 — 선 전체를 화살표로 그리는 게 아니라, 이미
+# go.Scatter로 그려진 선 위에 짧은 화살촉만 얹는 방식(plotly Scatter는 자체 화살표가
+# 없고, annotation의 화살표 기능을 빌려 쓴다).
+_ARROW_HEAD_LEN = 0.09
+
+
+def _direction_arrow(sx, sy, ex, ey, direction, color):
+    """direction이 "outbound"(허브→상대)/"inbound"(상대→허브)일 때 화살촉 annotation
+    kwargs를 반환한다. "bidirectional"/"unknown"이면 None — 방향이 공식 근거로 확인된
+    관계에만 화살표를 쓴다는 원칙(지시서 5절: 방향 UI 규칙)을 그대로 따른다."""
+    if direction == "outbound":
+        tip, tail = (ex, ey), (sx, sy)
+    elif direction == "inbound":
+        tip, tail = (sx, sy), (ex, ey)
+    else:
+        return None
+    dx, dy = tip[0] - tail[0], tip[1] - tail[1]
+    dist = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / dist, dy / dist
+    shaft_x, shaft_y = tip[0] - ux * _ARROW_HEAD_LEN, tip[1] - uy * _ARROW_HEAD_LEN
+    return dict(
+        x=tip[0], y=tip[1], ax=shaft_x, ay=shaft_y, xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=2, arrowsize=1.1, arrowwidth=1.6, arrowcolor=color,
+        text="", standoff=0,
+    )
+
+
 def _preview_text(headline_tuple):
     """헤드라인 튜플(dt, headline, url, status, context)에서 hover에 보여줄 문구를 고른다.
     실제 계약 문맥(뉴스 요약 또는 공시 원문에서 뽑은 스니펫)이 있으면 그걸 우선 쓰고,
@@ -258,12 +293,23 @@ def group_relationship_edges(edges):
     "그래프에 보이는 순서"와 "표의 순서"가 조용히 갈라질 수 있었다.
 
     news_count/filing_count를 나눠 세는 이유: 근거 표에서 "이 회사는 뉴스로 잡힌 건가,
-    공시로 잡힌 건가"가 신뢰도 판단의 핵심인데, 합계만으로는 구분이 안 되기 때문이다."""
+    공시로 잡힌 건가"가 신뢰도 판단의 핵심인데, 합계만으로는 구분이 안 되기 때문이다.
+
+    13D/13G 대량 지분 보유자는 개인·비상장 펀드가 많아 티커가 없는 경우가 흔하다
+    (find_beneficial_owners 참고) — 그때는 counterparty_ticker가 빈 문자열이라, 그대로
+    묶는 키로 쓰면 티커 없는 보유자가 전부 한 그룹으로 합쳐진다. 그래서 티커가 없으면
+    이름을 대신 키로 쓴다.
+
+    direction/best_grade/ownership_pct는 근거 등급이 가장 높은 엣지 기준으로 채택한다 —
+    같은 상대기업에 등급이 다른 근거가 섞여 있어도(예: SEC 자회사 A등급 + 뉴스 C등급)
+    가장 신뢰도 높은 근거의 값을 대표값으로 쓴다."""
     grouped = {}
     for e in edges:
-        g = grouped.setdefault(e["counterparty_ticker"], {
+        key = e["counterparty_ticker"] or e["counterparty_name"]
+        g = grouped.setdefault(key, {
             "name": e["counterparty_name"], "types": [], "headlines": [], "evidence_levels": [],
             "latest_status": None, "latest_dt": -1, "news_count": 0, "filing_count": 0,
+            "direction": "unknown", "best_grade": "D", "ownership_pct": None,
         })
         if e["relationship_type"] not in g["types"]:
             g["types"].append(e["relationship_type"])
@@ -272,17 +318,27 @@ def group_relationship_edges(edges):
         dt = e.get("datetime") or 0
         # 6번째 원소(relationship_type)는 근거 표에서 "이게 뉴스인지 공시인지"를 판정하는 데
         # 쓴다 — 상태 문자열("공시 확인")을 문자열 검사로 넘겨짚던 것보다 안전하다.
-        # 앞 5개 순서는 _preview_text()가 인덱스로 참조하므로 바꾸지 말 것.
+        # 앞 5개 순서는 _preview_text()가 인덱스로 참조하므로 바꾸지 말 것. 7·8번째(등급/
+        # 소스)는 근거 원문 표(pages/8_관계도.py)가 쓰려고 뒤에 덧붙인 것 — 기존 인덱스와
+        # 겹치지 않게 항상 끝에만 추가할 것.
         g["headlines"].append((
             dt, e["headline"], e.get("url"), e["status"], e.get("context"), e["relationship_type"],
+            e.get("evidence_grade", "D"), e.get("source_kind", ""),
         ))
-        if e["relationship_type"] == "공시상 언급":
+        if e["relationship_type"] == "공시 내 언급":
             g["filing_count"] += 1
         else:
             g["news_count"] += 1
         if dt >= g["latest_dt"]:
             g["latest_dt"] = dt
             g["latest_status"] = e["status"]
+
+        grade = e.get("evidence_grade", "D")
+        if _EVIDENCE_GRADE_RANK.get(grade, 0) >= _EVIDENCE_GRADE_RANK.get(g["best_grade"], 0):
+            g["best_grade"] = grade
+            g["direction"] = e.get("direction", "unknown")
+        if e.get("ownership_pct") is not None:
+            g["ownership_pct"] = e["ownership_pct"]
 
     return sorted(
         grouped.items(),
@@ -406,14 +462,17 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, se
         # 선을 노드 중심까지 긋지 않고 원 테두리에서 끊는다 — 중심까지 그으면 선이 원 안을
         # 가로질러 로고 위에 겹쳐 보인다(로고를 넣기 전에는 원이 비어 있어 티가 안 나던 부분).
         (sx, sy), (ex, ey) = _edge_endpoints(x, y)
+        edge_color = _RELATIONSHIP_EDGE_COLORS.get(primary_type, "#9aa0a6")
         fig.add_trace(go.Scatter(
             x=[sx, ex], y=[sy, ey], mode="lines",
-            line=dict(
-                width=1.6, color=_RELATIONSHIP_EDGE_COLORS.get(primary_type, "#9aa0a6"),
-                dash="dot" if is_terminated else "solid",
-            ),
+            line=dict(width=1.6, color=edge_color, dash="dot" if is_terminated else "solid"),
             opacity=0.75, hoverinfo="skip", showlegend=False,
         ))
+        # 화살표는 방향이 공식 근거로 확인된 관계(outbound/inbound)에만 그린다 —
+        # bidirectional/unknown은 지금처럼 선만(방향을 추측해 억지로 표시하지 않음).
+        arrow_kwargs = _direction_arrow(sx, sy, ex, ey, g.get("direction", "unknown"), edge_color)
+        if arrow_kwargs:
+            fig.add_annotation(**arrow_kwargs)
 
     # 범례는 실제로 등장한 유형만, 고정된 색 순서로(그래프마다 순서가 흔들리지 않게)
     for rel_type, color in _RELATIONSHIP_EDGE_COLORS.items():
