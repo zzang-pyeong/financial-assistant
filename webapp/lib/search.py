@@ -178,11 +178,15 @@ def render_sidebar_nav():
 
 
 def reset_session():
-    """세션 상태 전체 초기화 후 검색 화면으로."""
+    """세션 상태 전체 초기화 후 검색 화면으로.
+    서브페이지에서 호출될 때 st.rerun()만 쓰면 그 서브페이지 스크립트가 다시 실행되고,
+    session_state가 비어있으니 require_analysis()가 "먼저 검색하세요" 중간 화면을
+    보여준 뒤에야 다시 클릭해서 app.py로 가야 했음 — st.switch_page("app.py")로 바로
+    이동시켜 한 번에 시작화면이 뜨게 한다."""
     for k in list(st.session_state.keys()):
         del st.session_state[k]
     st.session_state.step = "search"
-    st.rerun()
+    st.switch_page("app.py")
 
 
 def render_sidebar_reset():
@@ -209,9 +213,28 @@ def render_sidebar_reset():
     )
 
 
+def render_sidebar_price():
+    """검색창 바로 위, 현재가 + 당일 변동을 작게 표시 — Conflict Board에서만 보이던
+    가격 정보를 모든 화면에서 계속 보이게 함. fetch_and_store_ticker()가 이미
+    받아온 info에서 꺼내 쓸 뿐 추가 API 호출은 없음."""
+    info = st.session_state.get("info")
+    if not info:
+        return
+    price = info.get("currentPrice") or info.get("regularMarketPrice")
+    if not isinstance(price, (int, float)):
+        return
+    change_pct = info.get("regularMarketChangePercent")
+    change_str = ""
+    if isinstance(change_pct, (int, float)):
+        arrow = "▲" if change_pct >= 0 else "▼"
+        change_str = f"  {arrow} {change_pct:+.2f}%"
+    st.sidebar.caption(f"현재가 ${price:,.2f}{change_str}")
+
+
 def render_sidebar():
-    """세션 초기화 링크 + 검색창 + 전체 페이지 네비게이션 — app.py와 모든 서브페이지
-    사이드바에서 공통 사용."""
+    """세션 초기화 링크 + 현재가 + 검색창 + 전체 페이지 네비게이션 — app.py와 모든
+    서브페이지 사이드바에서 공통 사용."""
     render_sidebar_reset()
+    render_sidebar_price()
     render_sidebar_search()
     render_sidebar_nav()
