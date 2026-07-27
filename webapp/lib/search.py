@@ -178,7 +178,7 @@ _SIDEBAR_PAGES = [
     ("pages/5_애널리스트_뉴스.py", "Analyst News", "📰"),
     ("pages/6_기업_이벤트_뉴스.py", "Company Events", "🏢"),
     ("pages/7_옵션_데이터.py", "Options Data", "🧮"),
-    ("pages/8_관계도.py", "Relationship Map", "🕸️"),
+    ("pages/8_관계도.py", "Connection Map", "🕸️"),
 ]
 
 
