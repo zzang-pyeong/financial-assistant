@@ -117,7 +117,32 @@ STATIC_KNOWN_COMPANIES = [
     {"ticker": "CVNA", "name": "Carvana Co."},
     {"ticker": "AI", "name": "C3.ai, Inc."},
 
-    # AI 클라우드/데이터센터 신흥주
+    # AI 클라우드/데이터센터·암호화폐 채굴 신흥주
     {"ticker": "CRWV", "name": "CoreWeave, Inc."},
     {"ticker": "IREN", "name": "IREN Limited"},
+    {"ticker": "MARA", "name": "MARA Holdings, Inc."},
+    {"ticker": "RIOT", "name": "Riot Platforms, Inc."},
+    {"ticker": "CLSK", "name": "CleanSpark, Inc."},
+    {"ticker": "WULF", "name": "TeraWulf Inc."},
+    {"ticker": "CIFR", "name": "Cipher Mining Inc."},
+    {"ticker": "HUT", "name": "Hut 8 Corp."},
+
+    # 우주/방산 (RDW 등 소형 우주기업 검색 시 상대방이 전혀 안 잡히던 공백 — 신규 추가)
+    {"ticker": "RTX", "name": "RTX Corporation"},
+    {"ticker": "LMT", "name": "Lockheed Martin Corporation"},
+    {"ticker": "NOC", "name": "Northrop Grumman Corporation"},
+    {"ticker": "BA", "name": "Boeing Company"},
+    {"ticker": "LHX", "name": "L3Harris Technologies, Inc."},
+    {"ticker": "GD", "name": "General Dynamics Corporation"},
+    {"ticker": "RKLB", "name": "Rocket Lab USA, Inc."},
+    {"ticker": "LUNR", "name": "Intuitive Machines, Inc."},
+    {"ticker": "ASTS", "name": "AST SpaceMobile, Inc."},
+    {"ticker": "PL", "name": "Planet Labs PBC"},
+
+    # 희토류/critical minerals (USAR 등 소형 광물기업 검색 시 상대방이 전혀 안 잡히던 공백 — 신규 추가)
+    {"ticker": "MP", "name": "MP Materials Corp."},
+    {"ticker": "LAC", "name": "Lithium Americas Corp."},
+    {"ticker": "ALB", "name": "Albemarle Corporation"},
+    {"ticker": "FCX", "name": "Freeport-McMoRan Inc."},
+    {"ticker": "CCJ", "name": "Cameco Corporation"},
 ]

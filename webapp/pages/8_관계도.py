@@ -34,6 +34,9 @@ st.caption(
     "링크를 눌러 원문에서 직접 확인해야 합니다(경쟁사 비교·소송 등일 수도 있음)."
 )
 
+info = st.session_state.info
+hub_name = info.get("longName") or info.get("shortName") or ticker
+
 if st.session_state.get("filing_edges_ticker") != ticker:
     known = list({
         **{kc["ticker"].upper(): kc for kc in STATIC_KNOWN_COMPANIES},
@@ -42,21 +45,27 @@ if st.session_state.get("filing_edges_ticker") != ticker:
             for p in st.session_state.peer_data["peers"] if p.get("name")
         },
     }.values())
-    progress = st.progress(0.0, text="SEC 공시자료에서 관계 확인 중...")
+    progress = st.progress(0.0, text="SEC 공시자료에서 관계 확인 중(양방향)...")
 
     def _on_progress(done, total):
-        progress.progress(done / total if total else 1.0, text=f"SEC 공시자료에서 관계 확인 중... ({done}/{total})")
+        progress.progress(done / total if total else 1.0, text=f"SEC 공시자료에서 관계 확인 중 (양방향)... ({done}/{total})")
 
-    filing_edges = find_filing_relationships(ticker, known, on_progress=_on_progress)
+    filing_edges = find_filing_relationships(ticker, hub_name, known, on_progress=_on_progress)
     progress.progress(1.0, text="공시 원문에서 계약 문맥 확인 중...")
     filing_edges = attach_context_snippets(filing_edges)
     progress.empty()
     st.session_state.update(filing_edges=filing_edges, filing_edges_ticker=ticker)
 
-all_edges = st.session_state.get("relationship_edges", []) + st.session_state.get("filing_edges", [])
+news_edges = st.session_state.get("relationship_edges", [])
+filing_edges_result = st.session_state.get("filing_edges", [])
+all_edges = news_edges + filing_edges_result
 if all_edges:
-    info = st.session_state.info
-    hub_name = info.get("longName") or info.get("shortName") or ticker
+    companies = {e["counterparty_ticker"] for e in all_edges}
+    kpi1, kpi2, kpi3 = st.columns(3)
+    kpi1.metric("상대기업", f"{len(companies)}개")
+    kpi2.metric("뉴스 근거", f"{len(news_edges)}건")
+    kpi3.metric("SEC 공시 근거", f"{len(filing_edges_result)}건")
+    st.caption("⚠️ 병치한 개수일 뿐, 근거가 많다고 관계가 더 확실하다는 뜻은 아닙니다 — 소스별로 나눠 본 것입니다.")
     st.plotly_chart(
         render_relationship_graph_figure(ticker, hub_name, all_edges),
         use_container_width=True, config=PLOTLY_CONFIG,

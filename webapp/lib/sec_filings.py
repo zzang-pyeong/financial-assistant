@@ -154,68 +154,105 @@ def _file_date_to_epoch(file_date_str):
         return 0
 
 
-def find_filing_relationships(target_ticker, known_companies, on_progress=None):
-    """target_ticker의 공시에서 known_companies(peer+정적목록, [{"ticker":, "name":}, ...])
-    각각이 본문에 등장하는지 병렬 검색. on_progress(done, total)를 완료될 때마다 호출
-    (진행률 표시용). 히트마다 엣지 하나씩 반환 — 기존 뉴스 기반 엣지와 같은 스키마
-    (relationship_type/status/evidence_level/headline/url/datetime)라 render_relationship_graph_figure
-    의 그룹핑 로직을 그대로 재사용할 수 있음.
-    target의 CIK를 못 찾으면(비상장·외국 민간발행사 등) 빈 리스트를 조용히 반환."""
-    target_cik = get_cik(target_ticker)
-    if not target_cik:
+def _phrases_for(name):
+    """이름 하나에 대한 검색 후보 구문 목록. 완전 축약형이 흔한 단어일 때만 단계적
+    후보(정식명→별칭→축약)를 만들고, 아니면 축약형 1개만 반환 — 대부분(peer+정적
+    목록 중 실측 2개만 예외)은 1회 검색으로 끝나 API 호출이 거의 안 늘어남."""
+    full = _filing_search_phrase(name)
+    if not full:
         return []
+    if full.lower() in _AMBIGUOUS_BARE_WORDS:
+        return _filing_search_candidates(name)
+    return [full]
 
-    candidates = []
+
+def _search_cascade(cik, phrases):
+    """정식 법인명 → 안전한 별칭 → 완전 축약 순서로 시도, 첫 히트에서 멈춘다.
+    완전 축약 단계까지 가서야 히트가 나고 그 구문이 흔한 단어면 ambiguous=True —
+    정식명/별칭 단계에서 이미 히트가 있었으면 이 위험한 단계 자체를 시도하지 않는다."""
+    for i, phrase in enumerate(phrases):
+        hits = _search_filings_for_company(cik, phrase)
+        if hits:
+            is_last_resort = i == len(phrases) - 1 and phrase.lower() in _AMBIGUOUS_BARE_WORDS
+            return hits, is_last_resort
+    return [], False
+
+
+def find_filing_relationships(target_ticker, target_name, known_companies, on_progress=None):
+    """양방향 검색 — (A) target_ticker의 공시에서 known_companies(peer+정적목록,
+    [{"ticker":, "name":}, ...]) 각각이 언급되는지(정방향), (B) known_companies 각자의
+    공시에서 target_name이 언급되는지(역방향)를 함께 병렬 검색.
+
+    역방향을 추가한 이유: 정방향만으로는 IREN처럼 작은 상대회사가 "우리가 NVIDIA와
+    계약했다"를 자기 공시에는 크게 실었어도 대상 종목(NVIDIA) 쪽 공시엔 안 나타나면
+    영영 못 잡음(실측으로 확인된 한계). 상대회사 수만큼 SEC 호출이 추가로 늘어나
+    총 호출량이 대략 2배가 되지만, known_companies 규모(peer+정적목록 ~100개)에서는
+    병렬 처리로 감당 가능한 수준.
+
+    on_progress(done, total)를 완료될 때마다 호출(진행률 표시용). 히트마다 엣지 하나씩
+    반환 — 기존 뉴스 기반 엣지와 같은 스키마(relationship_type/status/evidence_level/
+    headline/url/datetime)라 render_relationship_graph_figure의 그룹핑 로직을 그대로
+    재사용할 수 있음. 대상/상대 어느 쪽이든 CIK를 못 찾으면(비상장·외국 민간발행사 등)
+    그 방향의 검색만 조용히 빈 결과로 건너뜀."""
+    target_cik = get_cik(target_ticker)
+    target_phrases = _phrases_for(target_name)
+
+    forward_candidates = []
+    reverse_candidates = []
     for kc in known_companies:
-        ticker = (kc.get("ticker") or "").upper()
-        if not ticker or ticker == target_ticker.upper():
+        cp_ticker = (kc.get("ticker") or "").upper()
+        if not cp_ticker or cp_ticker == target_ticker.upper():
             continue
-        full = _filing_search_phrase(kc.get("name"))
-        if not full:
-            continue
-        # 완전 축약형이 흔한 단어일 때만 단계적 후보를 만든다 — 대부분의 회사(peer+정적
-        # 목록 ~100개 중 실측 2개뿐)는 그대로 1회 검색이라 API 호출이 거의 안 늘어남.
-        if full.lower() in _AMBIGUOUS_BARE_WORDS:
-            phrases = _filing_search_candidates(kc.get("name"))
-        else:
-            phrases = [full]
-        candidates.append((ticker, kc.get("name"), phrases))
-
-    def _search_cascade(phrases):
-        """정식 법인명 → 안전한 별칭 → 완전 축약 순서로 시도, 첫 히트에서 멈춘다.
-        완전 축약 단계까지 가서야 히트가 나고 그 구문이 흔한 단어면 ambiguous=True —
-        정식명/별칭 단계에서 이미 히트가 있었으면 이 위험한 단계 자체를 시도하지 않는다."""
-        for i, phrase in enumerate(phrases):
-            hits = _search_filings_for_company(target_cik, phrase)
-            if hits:
-                is_last_resort = i == len(phrases) - 1 and phrase.lower() in _AMBIGUOUS_BARE_WORDS
-                return hits, is_last_resort
-        return [], False
+        cp_name = kc.get("name")
+        if target_cik:
+            phrases = _phrases_for(cp_name)
+            if phrases:
+                forward_candidates.append((cp_ticker, cp_name, phrases))
+        if target_phrases:
+            cp_cik = get_cik(cp_ticker)
+            if cp_cik:
+                reverse_candidates.append((cp_ticker, cp_name, cp_cik))
 
     edges = []
-    total = len(candidates)
+    total = len(forward_candidates) + len(reverse_candidates)
     done = 0
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(_search_cascade, phrases): (cp_ticker, cp_name)
-            for cp_ticker, cp_name, phrases in candidates
-        }
+        futures = {}
+        for cp_ticker, cp_name, phrases in forward_candidates:
+            future = executor.submit(_search_cascade, target_cik, phrases)
+            futures[future] = ("forward", cp_ticker, cp_name, target_cik)
+        for cp_ticker, cp_name, cp_cik in reverse_candidates:
+            future = executor.submit(_search_cascade, cp_cik, target_phrases)
+            futures[future] = ("reverse", cp_ticker, cp_name, cp_cik)
+
         for future in as_completed(futures):
-            cp_ticker, cp_name = futures[future]
+            direction, cp_ticker, cp_name, doc_cik = futures[future]
             hits, ambiguous = future.result()
-            evidence_level = "공시 자료 (SEC EDGAR, 공식 문서)"
+
+            if direction == "forward":
+                evidence_level = "공시 자료 (SEC EDGAR, 공식 문서)"
+                snippet_name = cp_name
+            else:
+                evidence_level = "공시 자료 (상대 회사 공시에서 확인, SEC EDGAR)"
+                snippet_name = target_name
             if ambiguous:
                 evidence_level = "⚠️ 흔한 단어 검색이라 오탐 가능 · " + evidence_level
+
             for hit in hits:
+                if direction == "forward":
+                    headline = f"{hit['form']} ({hit['file_date']}) 공시에 '{cp_name}' 언급"
+                else:
+                    headline = f"{cp_name}의 {hit['form']} ({hit['file_date']}) 공시에 '{target_name}' 언급"
                 edges.append({
                     "counterparty_ticker": cp_ticker,
                     "counterparty_name": cp_name,
                     "relationship_type": "공시상 언급",
                     "status": "공시 확인",
                     "evidence_level": evidence_level,
-                    "headline": f"{hit['form']} ({hit['file_date']}) 공시에 '{cp_name}' 언급",
-                    "url": _filing_url(target_cik, hit),
+                    "headline": headline,
+                    "url": _filing_url(doc_cik, hit),
                     "datetime": _file_date_to_epoch(hit["file_date"]),
+                    "snippet_query_name": snippet_name,
                 })
             done += 1
             if on_progress:
@@ -293,7 +330,9 @@ def attach_context_snippets(filing_edges, max_companies=_MAX_SNIPPET_COMPANIES):
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
         futures = {
-            executor.submit(_extract_context_snippet, e["url"], e["counterparty_name"]): e
+            executor.submit(
+                _extract_context_snippet, e["url"], e.get("snippet_query_name", e["counterparty_name"]),
+            ): e
             for e in targets
         }
         for future in as_completed(futures):
