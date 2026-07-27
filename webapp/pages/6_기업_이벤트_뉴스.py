@@ -22,7 +22,6 @@ with st.container(key="page_header"):
     render_wordmark("Company", "Events", align="center")
     st.caption(ticker)
     st.caption("M&A · 경영진 교체 · 신규 계약/파트너십")
-    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 st.caption(

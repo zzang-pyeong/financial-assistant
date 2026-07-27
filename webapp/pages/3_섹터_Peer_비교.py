@@ -33,7 +33,6 @@ ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Peer", "Compare", align="center")
     st.caption(ticker)
-    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 peer_data = st.session_state.peer_data

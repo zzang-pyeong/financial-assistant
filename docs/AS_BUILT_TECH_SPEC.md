@@ -152,24 +152,41 @@ market` 등 키워드가 있으면 Passive, 없으면 "Active(추정)"으로 본
 
 **SEC 공시 기반**: 일반적 관계 문구를 그대로 검색하면 거의 안 걸린다(공시는 격식체를
 씀 — NVDA 최근 2년 "supply agreement" 검색 0건으로 실측 확인). 대신 상대 회사 이름
-자체가 대상 기업 공시 본문에 등장하는지를 SEC EDGAR Full-Text Search(무료, 키
-불필요)로 검색한다. 법인 접미사만 제거하고 업종 일반명사는 남긴다(뉴스 매칭과 반대 —
+자체가 공시 본문에 등장하는지를 SEC EDGAR Full-Text Search(무료, 키 불필요)로
+검색한다. 법인 접미사만 제거하고 업종 일반명사는 남긴다(뉴스 매칭과 반대 —
 "Taiwan Semiconductor"처럼 그 단어가 회사명의 핵심인 경우가 많아서). 검색 대상은
-`lib/known_companies.py::STATIC_KNOWN_COMPANIES`(정적 목록, ~100개) + peer 리스트이며,
+`lib/known_companies.py::STATIC_KNOWN_COMPANIES`(정적 목록, ~120개) + peer 리스트이며,
 병렬 조회(`ThreadPoolExecutor(max_workers=5)`) 후 캐시한다. 정밀 관계 유형·방향성은
 판단하지 않고 히트가 있으면 "공시상 언급"으로만 표시한다. 이 방식으로 뉴스만 쓸 때
 2~3개였던 NVDA의 상대 회사 수가 15개 회사·52개 엣지로 늘었다 — peer도 아니고
 뉴스에도 안 잡히던 CoreWeave·Microsoft·Oracle·Alphabet 같은 실제 고객사·파트너
 관계가 드러남.
 
+**양방향 검색**: 대상 종목(target) 공시에서 상대 회사 이름을 찾는 정방향뿐 아니라,
+알려진 회사 각자의 공시에서 target의 이름이 언급되는지도 함께 검색한다(`known_companies`
+규모만큼 SEC 호출이 대략 2배로 늘어남). 정방향만으로는 IREN처럼 작은 상대 회사가
+"우리가 NVIDIA와 계약했다"를 자기 공시에 크게 실었어도 target 쪽 공시에는 안 나타나면
+영영 못 잡는 한계가 있었음(실측으로 확인된 결함) — 역방향 히트는 "{상대회사}의 {폼}
+({날짜}) 공시에 '{target명}' 언급"으로 헤드라인을 구분 표기하고, 문맥 스니펫도 어느
+문서에서 어느 이름을 찾아야 하는지(`snippet_query_name`) 방향별로 다르게 넘긴다.
+RDW로 실측 확인: 우주/방산 정적 목록 추가와 함께 상대기업 0개 → 10개(Boeing/Northrop
+Grumman/Rocket Lab/Lockheed Martin/AST SpaceMobile/Cameco 등), SEC 공시 근거 34건.
+
 회사명에서 접미사를 뗀 뒤 흔한 영단어만 남는 후보가 있어("Arm"→"at arm's length",
 "Apple"→"apple-to-apples" 같은 관용구와 충돌, 무관 회사 공시에서 실제로 오탐 확인됨),
 정식 법인명 → 안전한 별칭 → 완전 축약 순으로 검색을 시도하고, 마지막 단계까지 가서야
-히트가 나면 "흔한 단어 검색이라 오탐 가능" 경고를 붙인다.
+히트가 나면 "흔한 단어 검색이라 오탐 가능" 경고를 붙인다. 이 축약 규칙은 다행히
+여러 단어로 된 회사명(예: "Riot Platforms")에는 적용되지 않는다 — 접미사만 떼도
+여러 단어가 남으면 그 이상 줄이지 않으므로, 새로 추가한 회사들 중 이 위험에 해당하는
+경우는 없었다.
 
 SEC가 요구하는 User-Agent 형식은 까다롭다 — 괄호·URL이 들어간 문자열("EnterTicker
 (github.com/...)")은 403으로 막히고, 앱이름+이메일형식 문자열("EnterTicker research
 contact@example.com")은 통과한다.
+
+**소스별 KPI 표시**: 그래프 위에 "상대기업 N개 · 뉴스 근거 N건 · SEC 공시 근거 N건"을
+`st.metric` 3개로 병치. 근거 개수가 많다고 관계가 더 확실하다는 뜻은 아니라는 캡션을
+바로 붙여, 개수 병치가 은근한 신뢰도 서열로 읽히지 않게 함(비집계 원칙과 동일한 이유).
 
 뉴스 엣지와 공시 엣지는 스키마가 같아 하나의 그래프 렌더링 함수
 (`render_relationship_graph_figure()`)로 병합 표시된다(한 회사가 둘 다에서 잡히면
@@ -236,7 +253,7 @@ compute_indicators() → classify_indicator_signals()
 | Peer 목록/뉴스/애널리스트 의견 | Finnhub | 1시간(뉴스 30분) | 무료 티어, API 키 필요(`.env` 또는 Streamlit Secrets) |
 | 기업명→티커 검색 | Yahoo Finance 비공식 검색 API | - | 한글 쿼리 미지원, 번역 후 호출 |
 | 뉴스 번역 | deep-translator(Google Translate 비공식) | 24시간 | 실패 시 원문 폴백 |
-| 관계도 "이미 아는 회사" 목록 | `lib/known_companies.py` 정적 하드코딩(~100개) | - | 새 API 아님, 코드에 박아둔 스냅샷 |
+| 관계도 "이미 아는 회사" 목록 | `lib/known_companies.py` 정적 하드코딩(~120개) | - | 새 API 아님, 코드에 박아둔 스냅샷. 우주/방산·희토류·암호화폐 채굴 카테고리는 나중에 추가됨 |
 | SEC EDGAR | 관계도 공시 검색 전용 | 24시간 | Full-Text Search API, 무료·키 불필요. 재무제표 소스로는 안 씀(여전히 yfinance) |
 
 ---
@@ -271,6 +288,8 @@ compute_indicators() → classify_indicator_signals()
 - 전체화면 사이드바 중복 버그 리포트가 있으나 재현에 실패해 원인 미확정.
 - 관계도 커버리지는 정적 "이미 아는 회사" 목록 크기에 종속된다 — 목록 밖 회사는 실제로
   관계가 언급돼도 그래프에 나타나지 않는다(재현율을 정확도·무비용과 맞바꾼 의도된 설계).
+  양방향 검색은 목록 "안"에 있는 회사를 놓치던 방향성 문제만 해결한 것이고, 목록 자체의
+  크기 한계는 여전히 남아있다 — 수동으로 계속 채워나가야 한다.
 - 관계도는 관계의 방향성과 정밀한 유형을 모른다 — 두 회사가 같이 언급된다는 것만 안다.
 - 관계도 매칭은 회사명에서 업종 일반명사를 뺀 뒤 남는 토큰이 흔한 단어인 경우 잔여
   오탐 위험이 있다. "Block, Inc."(→"block")·"Booking Holdings"(→"booking")·

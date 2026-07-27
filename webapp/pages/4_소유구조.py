@@ -26,7 +26,6 @@ ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Ownership", "Map", align="center")
     st.caption(ticker)
-    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 own = st.session_state.ownership

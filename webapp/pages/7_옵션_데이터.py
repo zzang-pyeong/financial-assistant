@@ -26,7 +26,6 @@ with st.container(key="page_header"):
         "⚠️ '지금 이 순간'의 스냅샷입니다. 과거 추이가 아니라, 앞으로 6개월 이내 만기가 도래할 "
         "옵션들의 현재 미결제약정(OI)·거래량을 보여줍니다."
     )
-    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 expirations = get_option_expirations(ticker)
@@ -84,22 +83,33 @@ with st.expander("📖 이 표, 어떻게 해석하나요?", expanded=True):
 
 st.divider()
 st.subheader("Call/Put Options")
-chosen = st.selectbox("만기일 선택", near_expirations)
+sel_col, sort_col = st.columns([3, 1])
+with sel_col:
+    chosen = st.selectbox("만기일 선택", near_expirations)
+with sort_col:
+    # 기본은 거래량 내림차순(시장 관심 순) — 토글을 켜면 행사가 오름차순으로 재배열해
+    # 지지/저항 후보를 가격대 순서로 훑어볼 수 있게 한다.
+    sort_by_strike = st.toggle("가격순으로")
 calls, puts = get_option_chain(ticker, chosen)
 if calls is not None and puts is not None:
+    if sort_by_strike:
+        calls_sorted = calls.sort_values("strike", ascending=True)
+        puts_sorted = puts.sort_values("strike", ascending=True)
+    else:
+        calls_sorted = calls.sort_values("volume", ascending=False)
+        puts_sorted = puts.sort_values("volume", ascending=False)
+
     col1, col2 = st.columns(2)
     with col1:
         st.write("**콜(Call)**")
         st.dataframe(
-            calls[["strike", "openInterest", "volume", "impliedVolatility"]]
-            .sort_values("volume", ascending=False),
+            calls_sorted[["strike", "openInterest", "volume", "impliedVolatility"]],
             use_container_width=True, hide_index=True,
         )
     with col2:
         st.write("**풋(Put)**")
         st.dataframe(
-            puts[["strike", "openInterest", "volume", "impliedVolatility"]]
-            .sort_values("volume", ascending=False),
+            puts_sorted[["strike", "openInterest", "volume", "impliedVolatility"]],
             use_container_width=True, hide_index=True,
         )
     with st.expander("📖 이 표, 어떻게 해석하나요?"):
