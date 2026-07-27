@@ -11,7 +11,7 @@ from lib.page_helpers import require_analysis, inject_base_styles, render_wordma
 from lib.search import render_sidebar
 from lib.charts import (
     render_relationship_graph_figure, group_relationship_edges,
-    MAX_RELATIONSHIP_NODES, PLOTLY_CONFIG,
+    MAX_RELATIONSHIP_NODES, RELATIONSHIP_PLOTLY_CONFIG,
 )
 from lib.known_companies import STATIC_KNOWN_COMPANIES
 from lib.sec_filings import find_filing_relationships, attach_context_snippets
@@ -117,8 +117,9 @@ st.plotly_chart(
     render_relationship_graph_figure(
         ticker, hub_name, all_edges, logos=st.session_state.get("relationship_logos", {}),
     ),
-    use_container_width=True, config=PLOTLY_CONFIG,
+    use_container_width=True, config=RELATIONSHIP_PLOTLY_CONFIG,
 )
+st.caption("노드에 마우스를 올리면 요약이 보입니다. 전체 근거와 원문 링크는 아래 표에 있습니다.")
 
 # 그래프에 상위 N개만 그리는 건 원래도 그랬는데 화면에 아무 표시가 없어서, 나머지 회사가
 # 존재하는지조차 알 수 없었다. 잘린 개수를 명시하고 전체는 아래 표에서 보게 한다.

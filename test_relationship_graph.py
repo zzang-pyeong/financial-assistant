@@ -137,3 +137,53 @@ assert len([s for s in fig_none.layout.shapes if s.type == "circle"]) >= 10
 print("13) 로고 없을 때 폴백(빈 원) OK — 이미지 0개, 원은 그대로")
 
 print("\n로고 관련 전부 통과")
+
+# --- 14) hover 줄바꿈 + 조작 비활성화 (2026-07-27, 실제 스크린샷 이슈) --------------------
+from lib.charts import _wrap_hover, _display_width, _HOVER_WIDTH, RELATIONSHIP_PLOTLY_CONFIG
+
+# 사용자 스크린샷에서 잘려 나온 실제 유형의 문장(공시 발췌문, 공백은 있지만 아주 긴 한 줄)
+long_line = ("…display and other products. The Display segment includes products for "
+             "manufacturing liquid crystal displays (LCDs), organic light-emitting diodes "
+             "(OLEDs), and other display technologies for TVs, monitors and mobile devices…")
+assert _display_width(long_line) > _HOVER_WIDTH * 2, "테스트 문장이 충분히 길지 않음"
+wrapped = _wrap_hover(long_line)
+segs = wrapped.split("<br>")
+assert len(segs) >= 2, "긴 줄이 안 쪼개짐"
+over = [s for s in segs if _display_width(s) > _HOVER_WIDTH]
+assert not over, f"폭을 넘는 줄이 남음: {[_display_width(s) for s in over]}"
+# 내용이 유실되지 않았는지 (공백 차이만 허용)
+assert wrapped.replace("<br>", " ").split() == long_line.split(), "줄바꿈 과정에서 내용이 바뀜"
+print(f"\n14) 긴 발췌문 줄바꿈 OK — 1줄 {_display_width(long_line)}폭 → {len(segs)}줄, "
+      f"최대 {max(_display_width(s) for s in segs)}폭 (상한 {_HOVER_WIDTH})")
+
+# 한글은 2폭으로 세는지 (한글만 있는 줄이 영문 기준으로 재면 두 배 넓어진다)
+kr = "공시 원문에서 회사명 주변을 그대로 잘라온 발췌문입니다 " * 3
+kr_wrapped = _wrap_hover(kr)
+assert all(_display_width(s) <= _HOVER_WIDTH for s in kr_wrapped.split("<br>"))
+print(f"15) 한글 줄바꿈 OK — 한글은 2폭으로 계산 (예: '가'={_display_width('가')}, a={_display_width('a')})")
+
+# 이미 들어있는 <br>은 살리고, 공백 없는 초장문 토큰도 강제로 끊는지
+mixed = "짧은 줄<br>" + "x" * 300
+mw = _wrap_hover(mixed).split("<br>")
+assert mw[0] == "짧은 줄", "기존 <br> 구조가 깨짐"
+assert all(_display_width(s) <= _HOVER_WIDTH for s in mw), "공백 없는 토큰이 안 끊김"
+print(f"16) 기존 <br> 보존 + 공백 없는 토큰 강제 분할 OK ({len(mw)}줄)")
+
+# 실제 그래프의 hover 텍스트 전부가 폭 상한을 지키는지
+node_trace = [t for t in fig.data if t.hovertext and len(t.hovertext) > 1][0]
+bad = [(h, _display_width(s)) for h in node_trace.hovertext
+       for s in h.split("<br>") if _display_width(s) > _HOVER_WIDTH]
+assert not bad, f"hover에 폭 초과 줄이 있음: {bad[:1]}"
+print(f"17) 그래프 hover {len(node_trace.hovertext)}개 전부 폭 상한 준수 OK")
+
+# 조작 비활성화 — 휠 확대 끄고 hover는 살아있어야 함
+assert RELATIONSHIP_PLOTLY_CONFIG["scrollZoom"] is False, "휠 확대가 여전히 켜져 있음"
+assert RELATIONSHIP_PLOTLY_CONFIG["displayModeBar"] is False, "툴바가 안 숨겨짐"
+assert RELATIONSHIP_PLOTLY_CONFIG.get("staticPlot") is not True, "staticPlot이면 hover도 죽는다"
+assert fig.layout.dragmode is False, f"dragmode가 안 꺼짐: {fig.layout.dragmode}"
+assert fig.layout.xaxis.fixedrange is True and fig.layout.yaxis.fixedrange is True, \
+    "축 확대가 안 막힘"
+assert node_trace.hoverinfo == "text", "hover가 꺼져버림 — 이건 남겨야 함"
+print("18) 조작 비활성화 OK — 휠확대·툴바·드래그·축확대 전부 off, hover만 살아있음")
+
+print("\nhover/조작 관련 전부 통과")

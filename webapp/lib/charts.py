@@ -24,7 +24,27 @@ _DOWN_COLOR = "#3498db"
 
 # 타 증권사 앱처럼 클릭+드래그로 차트를 이동(pan)할 수 있게 — 기본값(zoom 박스선택) 대신.
 # scrollZoom은 마우스 휠로 확대/축소, displaylogo는 plotly 로고 제거.
+# ⚠️ 이건 가격 차트 전용이다. 관계도는 아래 RELATIONSHIP_PLOTLY_CONFIG를 쓴다.
 PLOTLY_CONFIG = {"scrollZoom": True, "displaylogo": False}
+
+# 관계도 전용 — 조작을 전부 끄고 hover만 남긴다.
+# 이유: 관계도는 그래프 아래에 근거 표가 길게 붙어서 사용자가 반드시 스크롤을 내려야 하는데,
+# 커서가 그래프 위에 있는 동안 휠을 굴리면 페이지가 안 내려가고 그래프가 확대/축소돼 버렸다
+# (가격 차트와 같은 config를 공유하고 있었던 탓). 관계도는 확대·이동해서 볼 이유도 없다 —
+# 노드가 10개뿐이고 좌표에 의미가 없다(원형 배치는 그냥 배치일 뿐).
+# staticPlot=True로 하면 hover까지 죽어서 쓸 수 없다 — 개별 옵션으로 끈다.
+RELATIONSHIP_PLOTLY_CONFIG = {
+    "scrollZoom": False,        # 휠은 페이지 스크롤로 넘긴다(이 문제의 직접 원인)
+    "displayModeBar": False,    # 확대·저장 등 툴바 자체를 숨김
+    "displaylogo": False,
+    "doubleClick": False,       # 더블클릭 자동 확대 방지
+    "showAxisDragHandles": False,
+}
+
+# hover 말풍선 한 줄의 최대 표시 폭(한글은 2, 그 외는 1로 계산). plotly는 hover 텍스트를
+# 자동 줄바꿈하지 않아서, 긴 줄이 있으면 말풍선이 그림 영역보다 넓어지고 화면 밖으로
+# 잘려 나간다 — 공시 발췌문(영문 장문)에서 실제로 발생했다.
+_HOVER_WIDTH = 92
 
 
 def render_price_chart_figure(df, period_days=None):
@@ -95,7 +115,9 @@ _RELATIONSHIP_NODE_FILLS = {
 }
 _RELATIONSHIP_HUB_COLOR = "#2f6fed"
 _TERMINATED_STATUS = "철회·무산"
-_MAX_PREVIEW_CHARS = 220
+# hover에 넣을 발췌문 길이. 220자였는데 줄바꿈을 넣으면 그것만 3~4줄이 되어 말풍선이
+# 그래프를 덮었다 — 전체 발췌문은 아래 근거 표에서 넉넉히 보므로 여기선 짧게 맛만 보인다.
+_MAX_PREVIEW_CHARS = 150
 
 # 노드가 이 개수를 넘으면 반지름을 번갈아 다르게 줘서 라벨이 서로 겹치는 걸 막는다
 # (10개를 같은 반지름 원에 두면 좌우 3~4시 방향에서 회사명이 붙어버린다).
@@ -119,6 +141,50 @@ _HUB_RADIUS = 0.19
 #   내접 정사각형의 한 변은 반지름의 √2(≈1.41)이므로 그보다 크면 모서리가 삐져나온다.
 _LOGO_FIT_CIRCULAR = 1.84
 _LOGO_FIT_SQUARE = 1.41
+
+
+def _display_width(text):
+    """한글·한자·일본어는 라틴 문자의 약 두 배 폭을 차지하므로 2로 센다 — hover에 한글
+    설명과 영문 공시 발췌문이 섞여 있어서, 글자 수로만 재면 한글 줄이 훨씬 길어진다."""
+    return sum(2 if ord(ch) > 0x2E7F else 1 for ch in text)
+
+
+def _wrap_hover(text, width=_HOVER_WIDTH):
+    """hover 텍스트를 단어 경계에서 직접 줄바꿈한다(plotly가 안 해준다).
+
+    이미 들어있는 <br>은 그대로 살리고, 그보다 긴 줄만 쪼갠다. 공백 없이 긴 토큰
+    (URL 등)은 단어 경계가 없으니 폭에 맞춰 강제로 끊는다 — 안 그러면 그 줄 하나 때문에
+    말풍선 전체가 화면 밖으로 잘린다."""
+    lines = []
+    for raw_line in text.split("<br>"):
+        if _display_width(raw_line) <= width:
+            lines.append(raw_line)
+            continue
+        current = ""
+        for word in raw_line.split(" "):
+            # 단어 자체가 한 줄보다 길면 폭 단위로 잘라 넣는다
+            while _display_width(word) > width:
+                head = ""
+                for ch in word:
+                    if _display_width(head + ch) > width:
+                        break
+                    head += ch
+                if current:
+                    lines.append(current)
+                    current = ""
+                lines.append(head)
+                word = word[len(head):]
+            if not word:
+                continue
+            candidate = f"{current} {word}" if current else word
+            if current and _display_width(candidate) > width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+    return "<br>".join(lines)
 
 
 def _add_node_circle(fig, x, y, radius, fillcolor, linecolor, width=2):
@@ -303,19 +369,21 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None):
         # 눈이 훑을 때 줄이 안 맞아 더 어수선해진다.
         text_positions.append("top center" if y >= 0 else "bottom center")
 
+        # 아래 근거 표가 전체를 다 보여주므로 hover는 최신 2건까지만 — 말풍선이 화면을
+        # 덮을 만큼 길어지면 정작 그래프가 안 보인다.
         headlines_preview = "<br>".join(
             f"· [{h[3]}] {_preview_text(h)}"
-            for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:3]
+            for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:2]
         )
         source_str = " · ".join(filter(None, [
             f"뉴스 {g['news_count']}건" if g["news_count"] else "",
             f"공시 {g['filing_count']}건" if g["filing_count"] else "",
         ]))
-        hover_text.append(
+        hover_text.append(_wrap_hover(
             f"<b>{g['name'] or ticker}</b> ({ticker})<br>{', '.join(g['types'])}"
             f" · 최신 상태: {g['latest_status']}<br>근거: {source_str}"
-            f"<br><br>{headlines_preview}<br><br><i>원문 링크는 그래프 아래 표에 있습니다</i>"
-        )
+            f"<br><br>{headlines_preview}<br><br><i>원문 링크와 전체 근거는 아래 표에 있습니다</i>"
+        ))
 
     # 원은 shape으로 그렸으므로, 이 trace는 (1) 라벨 (2) hover 판정 영역 역할만 한다.
     # 마커를 완전 투명하게 두는 이유: 원 위에 또 원을 겹쳐 그리면 테두리가 두 겹으로 보인다.
@@ -347,10 +415,15 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None):
             hovertext=[hub_name], hoverinfo="text", showlegend=False,
         ))
 
-    # 라벨이 노드 바깥에 붙으므로 축 범위를 반지름보다 넉넉히 잡아야 잘리지 않는다
+    # 라벨이 노드 바깥에 붙으므로 축 범위를 반지름보다 넉넉히 잡아야 잘리지 않는다.
+    # fixedrange=True로 축 확대/축소를 아예 막는다 — 관계도는 좌표에 의미가 없어서(원형
+    # 배치는 배치일 뿐) 확대해서 볼 것이 없고, 사용자가 스크롤로 아래 표를 보려다 실수로
+    # 그래프를 확대해버리는 일을 막는 게 훨씬 중요하다.
     span = _RADIUS_FAR + _NODE_RADIUS + 0.42
-    fig.update_xaxes(visible=False, range=[-span, span])
-    fig.update_yaxes(visible=False, range=[-span, span], scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(visible=False, range=[-span, span], fixedrange=True)
+    fig.update_yaxes(
+        visible=False, range=[-span, span], scaleanchor="x", scaleratio=1, fixedrange=True,
+    )
     fig.update_layout(
         height=520,
         margin=dict(l=10, r=10, t=10, b=10),
@@ -359,6 +432,7 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None):
             font=dict(size=11), bgcolor="rgba(0,0,0,0)",
         ),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        dragmode=False,  # 드래그로 이동/영역선택하는 동작 제거 (hover는 그대로 살아있다)
         hoverlabel=dict(align="left", bgcolor="white", font=dict(size=12)),
     )
     return fig
