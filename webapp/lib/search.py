@@ -217,7 +217,9 @@ def render_sidebar_price():
     """검색창 바로 위, 티커명 + 현재가 + 당일 변동률을 한 줄로 표시 — Conflict Board에서만
     보이던 가격 정보를 모든 화면에서 계속 보이게 함. fetch_and_store_ticker()가 이미
     받아온 info에서 꺼내 쓸 뿐 추가 API 호출은 없음. 가격·변동률은 국내 증권사 관례대로
-    상승 빨강/하락 파랑으로 색칠(화살표 글자는 안 씀)."""
+    상승 빨강/하락 파랑으로 색칠(화살표 글자는 안 씀).
+    st.caption()은 컨테이너 자체에 낮은 투명도가 걸려 색이 흐리게 보여서, 직접 HTML로
+    렌더링해 색상이 옅어지지 않고 진하게(font-weight:700) 나오게 한다."""
     info = st.session_state.get("info")
     if not info:
         return
@@ -227,11 +229,14 @@ def render_sidebar_price():
     ticker = st.session_state.get("ticker", "")
     change_pct = info.get("regularMarketChangePercent")
     if isinstance(change_pct, (int, float)):
-        color = "red" if change_pct >= 0 else "blue"
-        price_part = f":{color}[${price:,.2f}  {change_pct:+.2f}%]"
+        color = "#e5484d" if change_pct >= 0 else "#2f6fed"  # 앱 기존 팔레트(경고색/브랜드블루) 재사용
+        price_html = f"<span style='color:{color}; font-weight:700;'>${price:,.2f}  {change_pct:+.2f}%</span>"
     else:
-        price_part = f"${price:,.2f}"
-    st.sidebar.caption(f"{ticker}  {price_part}")
+        price_html = f"<span style='font-weight:700;'>${price:,.2f}</span>"
+    st.sidebar.markdown(
+        f"<div style='font-size:0.85rem; margin:0 0 0.4rem 0;'>{ticker}  {price_html}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_sidebar():
