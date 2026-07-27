@@ -95,13 +95,17 @@ def _date_str(epoch):
 _NO_CONTEXT_PLACEHOLDER = "원문 확인 필요 (문맥 추출 안 됨)"
 
 
-def _best_description(g, max_chars=140):
+def _best_description(g, max_chars=200):
     """상대기업별 요약 표에서 "관계 유형"(전략적 제휴/공시상 언급 등)만으로는 실제로 뭘
     하는 관계인지 전혀 알 수 없다는 문제 — 그래프 hover와 근거 원문 표에만 있던 실제
     문맥(뉴스 요약 또는 공시 발췌)을 요약 표에도 끌어와 한눈에 보이게 한다.
     문맥(context)이 있는 근거 중 최신 것을 우선 채택하고, 문맥을 하나도 못 얻은 경우
     (SEC 스니펫 추출 실패 등)엔 "공시상 언급" 헤드라인 자체는 내용이 없으므로 그대로
-    보여주지 않고 원문 확인을 안내한다 — 뉴스 헤드라인은 그 자체로 내용이 있어 그대로 쓴다."""
+    보여주지 않고 원문 확인을 안내한다 — 뉴스 헤드라인은 그 자체로 내용이 있어 그대로 쓴다.
+
+    lib/sec_filings.py가 이제 문장 경계에서 다듬어 넘겨주므로(최대 320자), 여기서 다시
+    글자 수로 뚝 자르면 "단어 중간에서 끊긴다"는 원래 문제가 되풀이된다 — 자를 일이
+    있어도 단어 경계(공백)에서 자른다."""
     with_context = [h for h in g["headlines"] if h[4]]
     if with_context:
         text = max(with_context, key=lambda h: h[0])[4]
@@ -109,7 +113,7 @@ def _best_description(g, max_chars=140):
         latest = max(g["headlines"], key=lambda h: h[0])
         text = _NO_CONTEXT_PLACEHOLDER if latest[5] == "공시상 언급" else latest[1]
     if len(text) > max_chars:
-        text = text[:max_chars].rstrip() + "…"
+        text = text[:max_chars].rsplit(" ", 1)[0].rstrip(",;:.…") + "…"
     return text
 
 

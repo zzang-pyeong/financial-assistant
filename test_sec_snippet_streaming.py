@@ -100,3 +100,54 @@ print(f"\n5) 조기 종료 비율 {ratio*100:.1f}% — 실제 10-K 본문 1.9MB 
       f"상위 20건 {1.9*20:.0f}MB → 상위 10건 {1.9*ratio*10:.1f}MB 수준")
 
 print("\n전부 통과")
+
+# --- 6) 문장 경계 다듬기 (2026-07-27 추가, 실제 화면 캡처에서 단어 중간 절단 확인됨) --------
+# 예전엔 매칭 지점 앞뒤 고정폭(±180자)만 잘라서 "...etermination, the value of..." 처럼
+# 단어 중간에서 끊긴 스니펫이 나왔다. _trim_to_sentence가 문장 단위로 다듬는지 확인한다.
+
+# 6a) 문장이 앞뒤로 온전히 들어있으면 잘림 표시 없이 그 문장 그대로 나오는지
+text = "Filler before. In 2028, the Company will supply Widget Corp with parts. Filler after."
+match_start = text.index("Widget Corp")
+sentence, start_cut, end_cut = sec_filings._trim_to_sentence(text, match_start, len("Widget Corp"))
+assert sentence == "In 2028, the Company will supply Widget Corp with parts.", f"문장이 안 맞음: {sentence!r}"
+assert not start_cut and not end_cut, f"온전한 문장인데 잘림으로 표시됨: {start_cut}, {end_cut}"
+print(f"6a) 문장 경계 추출 OK: {sentence!r}")
+
+# 6b) 회사명 앞에 문장 경계가 전혀 없으면(창 시작까지 이어짐) 시작이 잘린 것으로 표시되는지
+frag = "no boundary before this point Widget Corp with parts. Filler after."
+sentence2, start_cut2, end_cut2 = sec_filings._trim_to_sentence(
+    frag, frag.index("Widget Corp"), len("Widget Corp"),
+)
+assert start_cut2, "문장 시작을 못 찾았는데 잘림 표시가 안 됨"
+assert not end_cut2, "문장 끝은 온전한데 잘림으로 표시됨"
+print("6b) 시작 경계를 못 찾으면 잘림(start_cut) 표시 OK")
+
+# 6c) 문장의 앞뒤 경계는 둘 다 온전히 잡혔는데(=window 안에 다 들어옴) 문장 자체가 표시
+# 상한(_MAX_SENTENCE_CHARS)을 넘는 경우 — 법률 문서 특유의 장문 나열. window를 넉넉히 줘서
+# 경계 탐색 자체는 문제 없게 하고, 상한 절단만 단독으로 검증한다.
+long_sentence = (
+    "In 2028 the Company will " + ("supply many widgets and various components " * 10)
+    + "to Widget Corp under the terms described herein."
+)
+assert len(long_sentence) > sec_filings._MAX_SENTENCE_CHARS, "테스트 문장이 상한보다 짧음"
+LONG_DOC = "<p>Filler. " + long_sentence + " More filler after.</p>"
+
+def fake_get_long(url, **kwargs):
+    assert kwargs.get("stream") is True
+    resp = FakeResponse(LONG_DOC)
+    last_response["r"] = resp
+    return resp
+
+sec_filings.requests.get = fake_get_long
+sentence3 = sec_filings._stream_find_context(
+    "http://fake/long.htm", ["Widget Corp"], window=len(LONG_DOC),
+)
+sec_filings.requests.get = fake_get  # 이후 테스트를 위해 원래 fake로 복원
+assert sentence3, "긴 문장에서 스니펫을 못 뽑음"
+assert not sentence3.startswith("…"), f"경계를 다 잡았는데 시작이 잘림으로 표시됨: {sentence3!r}"
+assert sentence3.endswith("…"), f"상한을 넘었는데 말줄임이 안 붙음: {sentence3!r}"
+assert not sentence3[:-1].endswith(" "), f"단어 중간이 아니라 공백 경계에서 잘려야 함: {sentence3[-20:]!r}"
+assert len(sentence3) <= sec_filings._MAX_SENTENCE_CHARS + 1, f"상한보다 길게 남음: {len(sentence3)}자"
+print(f"6c) 긴 문장 상한 절단 OK ({len(sentence3)}자): 끝부분 {sentence3[-40:]!r}")
+
+print("\n문장 경계 다듬기 전부 통과")

@@ -313,9 +313,37 @@ def _safe_split_point(raw):
     return len(raw) if raw.find(">", last_open) != -1 else last_open
 
 
-def _stream_find_context(url, phrases, window=180):
-    """공시 문서를 스트리밍으로 받으면서 phrases 중 하나가 나오는 즉시 그 주변
-    ±window자를 잘라 반환하고 연결을 끊는다. 못 찾으면 None.
+# "관계도 표에 뭘 하는지 안 보인다"는 피드백 — 예전엔 매칭 지점 앞뒤로 고정 폭(±180자)만
+# 잘랐어서 "...etermination, the value of..." 처럼 단어 중간에서 끊긴 스니펫이 나왔다.
+# 문장 경계에서 자르면 훨씬 읽을 만해진다. 마침표 뒤에 대문자/인용부호가 오는 지점만
+# 문장 끝으로 인정해 "Inc."·"U.S." 같은 약어의 마침표를 오판할 여지를 조금 줄인다 —
+# 완벽하진 않지만(약어 뒤에 대문자 문장이 바로 오면 여전히 오판 가능), 고정폭 절단보다는
+# 항상 낫다.
+_SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"‘“])')
+_MAX_SENTENCE_CHARS = 320
+
+
+def _trim_to_sentence(text, match_start, match_len):
+    """text 안에서 [match_start, match_start+match_len) 구간(회사명)을 포함하는 문장만
+    골라 반환한다. (문장, 시작이_잘렸는지, 끝이_잘렸는지) 튜플 — 잘림 여부는 호출부가
+    "…" 표시 여부를 정하는 데 쓴다. 문장 경계를 못 찾으면(text 끝까지 가도 없음)
+    text 전체를 잘린 것으로 간주해 반환."""
+    bounds = [0] + [m.end() for m in _SENTENCE_BOUNDARY_RE.finditer(text)] + [len(text)]
+    match_end = match_start + match_len
+    for i in range(len(bounds) - 1):
+        s, e = bounds[i], bounds[i + 1]
+        if s <= match_start < e:
+            # 회사명이 문장 경계 판정 지점을 걸쳐 있으면(약어 오판 등) 다음 문장까지 합친다
+            while e < match_end and i + 1 < len(bounds) - 1:
+                i += 1
+                e = bounds[i + 1]
+            return text[s:e].strip(), s == 0, e == len(text)
+    return text.strip(), True, True
+
+
+def _stream_find_context(url, phrases, window=260):
+    """공시 문서를 스트리밍으로 받으면서 phrases 중 하나가 나오는 즉시 그 주변 ±window자를
+    모아 문장 단위로 다듬어 반환하고 연결을 끊는다. 못 찾으면 None.
 
     전체를 받아 한 번에 처리하지 않는 이유는 위 모듈 주석 참조 — 10-K 한 건이 수 MB인데
     실제로 쓰는 건 수백 자뿐이라, 찾은 시점에 멈추면 대부분의 문서에서 앞부분만 받고 끝난다."""
@@ -374,12 +402,20 @@ def _stream_find_context(url, phrases, window=180):
 
     start = max(0, found_at - window)
     end = min(len(tail), found_at + found_len + window)
-    prefix = "…" if (start > 0 or trimmed) else ""
-    suffix = "…" if end < len(tail) else "…"  # 중간에 끊고 나왔으므로 뒤는 항상 이어짐
-    return prefix + tail[start:end].strip() + suffix
+    raw = tail[start:end]
+    sentence, start_cut, end_cut = _trim_to_sentence(raw, found_at - start, found_len)
+    if len(sentence) > _MAX_SENTENCE_CHARS:
+        # 문장 하나가 너무 길면(법률 문서 특유의 장문) 단어 경계에서 자른다 — 그래도
+        # 통째로 한 문장이라 예전 고정폭 절단보다는 훨씬 자연스럽게 끝난다. 말줄임표는
+        # 아래 suffix가 한 번만 붙이므로 여기서는 자르기만 한다(안 그러면 "…"가 두 번 붙음).
+        sentence = sentence[:_MAX_SENTENCE_CHARS].rsplit(" ", 1)[0].rstrip(",;:")
+        end_cut = True
+    prefix = "…" if (start_cut and (start > 0 or trimmed)) else ""
+    suffix = "…" if end_cut else ""
+    return prefix + sentence + suffix
 
 
-def _extract_context_snippet(url, company_name, window=180):
+def _extract_context_snippet(url, company_name, window=260):
     """문서에서 회사명 주변 문맥을 뽑아 반환. 정식 법인명부터 순서대로 시도해 가장 구체적인
     표기를 우선 채택한다(검색 때 어떤 축약 단계로 매칭됐는지와 무관하게, 문서 안에 실제로
     적힌 표기를 그대로 쓰기 위함). 못 찾거나 실패하면 None."""
