@@ -214,21 +214,24 @@ def render_sidebar_reset():
 
 
 def render_sidebar_price():
-    """검색창 바로 위, 현재가 + 당일 변동을 작게 표시 — Conflict Board에서만 보이던
-    가격 정보를 모든 화면에서 계속 보이게 함. fetch_and_store_ticker()가 이미
-    받아온 info에서 꺼내 쓸 뿐 추가 API 호출은 없음."""
+    """검색창 바로 위, 티커명 + 현재가 + 당일 변동률을 한 줄로 표시 — Conflict Board에서만
+    보이던 가격 정보를 모든 화면에서 계속 보이게 함. fetch_and_store_ticker()가 이미
+    받아온 info에서 꺼내 쓸 뿐 추가 API 호출은 없음. 가격·변동률은 국내 증권사 관례대로
+    상승 빨강/하락 파랑으로 색칠(화살표 글자는 안 씀)."""
     info = st.session_state.get("info")
     if not info:
         return
     price = info.get("currentPrice") or info.get("regularMarketPrice")
     if not isinstance(price, (int, float)):
         return
+    ticker = st.session_state.get("ticker", "")
     change_pct = info.get("regularMarketChangePercent")
-    change_str = ""
     if isinstance(change_pct, (int, float)):
-        arrow = "▲" if change_pct >= 0 else "▼"
-        change_str = f"  {arrow} {change_pct:+.2f}%"
-    st.sidebar.caption(f"현재가 ${price:,.2f}{change_str}")
+        color = "red" if change_pct >= 0 else "blue"
+        price_part = f":{color}[${price:,.2f}  {change_pct:+.2f}%]"
+    else:
+        price_part = f"${price:,.2f}"
+    st.sidebar.caption(f"{ticker}  {price_part}")
 
 
 def render_sidebar():
