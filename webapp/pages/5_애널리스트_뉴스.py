@@ -5,8 +5,8 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.translate import to_korean
-from lib.config import ANALYST_NEWS_LOOKBACK_DAYS
+from lib.translate import to_korean, prefetch_korean
+from lib.config import ANALYST_NEWS_LOOKBACK_DAYS, ANALYST_NEWS_DISPLAY_LIMIT
 from lib.page_helpers import require_analysis, news_date_str, inject_base_styles, render_wordmark
 from lib.search import render_sidebar
 
@@ -29,7 +29,12 @@ st.caption(
 )
 analyst_news = st.session_state.get("analyst_news", [])
 if analyst_news:
-    for n in analyst_news[:8]:
+    shown = analyst_news[:ANALYST_NEWS_DISPLAY_LIMIT]
+    # 표시할 헤드라인을 먼저 한꺼번에 병렬 번역해둔다 — 안 그러면 아래 루프가 헤드라인마다
+    # 순차 HTTP 요청을 보내 화면이 한 줄씩 늦게 그려진다(Conflict Board와 같은 문제).
+    with st.spinner("헤드라인 번역 중..."):
+        prefetch_korean([n["headline"] for n in shown])
+    for n in shown:
         headline = to_korean(n["headline"])
         title = f"[{headline}]({n['url']})" if n.get("url") else headline
         date_str = news_date_str(n)

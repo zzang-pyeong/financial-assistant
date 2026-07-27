@@ -114,6 +114,48 @@ def get_finnhub_peers(ticker):
         return []
 
 
+# 로고 URL 캐시 — 관계도가 이 조회를 ThreadPoolExecutor로 병렬 처리하기 때문에
+# @st.cache_data를 쓸 수 없다(워커 스레드에서 호출하면 ScriptRunContext 경고가 난다).
+# lib/translate.py, lib/sec_filings.py와 같은 이유·같은 패턴.
+_LOGO_CACHE = {}
+_LOGO_CACHE_MAX = 2000
+
+
+def _fetch_company_logo_url(ticker):
+    """Finnhub company-profile2에서 로고 URL만 뽑아온다. 캐시도 Streamlit 의존도 없어
+    워커 스레드에서 호출해도 안전하다. 실패·빈 응답·로고 없음은 전부 None."""
+    if not FINNHUB_KEY:
+        return None
+    try:
+        r = requests.get(
+            "https://finnhub.io/api/v1/stock/profile2",
+            params={"symbol": ticker, "token": FINNHUB_KEY},
+            timeout=10,
+        )
+        data = r.json()
+        return (data.get("logo") or None) if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def get_company_logo_url(ticker):
+    """회사 로고 이미지 URL 또는 None. 로고는 거의 안 바뀌므로 프로세스 수명 동안 캐시한다.
+
+    ⚠️ None이 흔한 정상 경로다 — Finnhub가 로고를 못 주는 회사가 특히 소형주에 많다.
+    호출부는 로고가 없는 노드를 정상적으로 그릴 수 있어야 한다(관계도는 빈 원으로 폴백)."""
+    if not ticker:
+        return None
+    key = ticker.upper()
+    if key in _LOGO_CACHE:
+        return _LOGO_CACHE[key]
+    url = _fetch_company_logo_url(ticker)
+    if len(_LOGO_CACHE) >= _LOGO_CACHE_MAX:
+        for k in list(_LOGO_CACHE)[: _LOGO_CACHE_MAX // 5]:
+            _LOGO_CACHE.pop(k, None)
+    _LOGO_CACHE[key] = url
+    return url
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_finnhub_recommendation_trends(ticker):
     if not FINNHUB_KEY:

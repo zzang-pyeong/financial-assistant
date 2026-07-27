@@ -82,9 +82,86 @@ _RELATIONSHIP_EDGE_COLORS = {
     "전략적 제휴": "#f39c12",
     "공시상 언급": "#6b7280",  # 뉴스 기반 5개 유형과 구분되는 중립 회색 — SEC 공시(lib/sec_filings.py)
 }
+# 노드 안쪽을 같은 색 계열의 아주 옅은 톤으로 채워 선-노드가 한 덩어리로 읽히게 한다.
+# 채도를 낮게 잡는 이유: 진하게 칠하면 색이 "유불리"를 암시하는 것처럼 보이는데, 여기서
+# 색은 관계 유형 구분일 뿐이다(원칙 B — 방향 색상 미사용).
+_RELATIONSHIP_NODE_FILLS = {
+    "인수합병(M&A)": "#fdecea",
+    "공급 계약": "#eaf1fe",
+    "합작투자": "#f3ecf8",
+    "라이선싱": "#e8f6f3",
+    "전략적 제휴": "#fef5e7",
+    "공시상 언급": "#f1f2f4",
+}
 _RELATIONSHIP_HUB_COLOR = "#2f6fed"
 _TERMINATED_STATUS = "철회·무산"
 _MAX_PREVIEW_CHARS = 220
+
+# 노드가 이 개수를 넘으면 반지름을 번갈아 다르게 줘서 라벨이 서로 겹치는 걸 막는다
+# (10개를 같은 반지름 원에 두면 좌우 3~4시 방향에서 회사명이 붙어버린다).
+_STAGGER_FROM = 6
+_RADIUS_NEAR = 1.0
+_RADIUS_FAR = 1.24
+
+# 노드 원의 크기 — 픽셀(marker size)이 아니라 **데이터 좌표** 단위다.
+# 로고를 넣으려면 이래야 한다: plotly의 layout image는 데이터 좌표로 배치되는데 marker는
+# 픽셀 단위라, 원은 픽셀이고 로고는 데이터 단위면 창 크기가 바뀔 때 로고가 원 밖으로
+# 삐져나온다. 원 자체를 shape(데이터 좌표)로 그려서 둘이 항상 같이 움직이게 했다.
+_NODE_RADIUS = 0.135
+_HUB_RADIUS = 0.19
+# 로고 크기 배율 — 로고가 이미 원형으로 가공됐는지에 따라 둘 중 하나를 쓴다.
+#
+# _LOGO_FIT_CIRCULAR: 원형 PNG(lib/logos.py가 가운데를 원으로 잘라 알파 마스크를 씌운 것)는
+#   모서리가 없으니 원을 꽉 채운다. 다만 지름을 원과 똑같이(2.0) 주면 이미지가 테두리 선을
+#   덮어버려 유형별 색 링이 사라진다 — plotly는 image를 shape 위에 그리기 때문이다.
+#   그래서 살짝 안쪽에 앉혀(0.92) 링과 흰 여백이 남게 한다.
+# _LOGO_FIT_SQUARE: 가공에 실패한(예: SVG) 네모난 이미지는 예전처럼 원에 내접시킨다.
+#   내접 정사각형의 한 변은 반지름의 √2(≈1.41)이므로 그보다 크면 모서리가 삐져나온다.
+_LOGO_FIT_CIRCULAR = 1.84
+_LOGO_FIT_SQUARE = 1.41
+
+
+def _add_node_circle(fig, x, y, radius, fillcolor, linecolor, width=2):
+    """노드 원을 데이터 좌표 shape으로 그린다(로고와 같은 좌표계를 쓰기 위함).
+    layer="below"는 trace(선·라벨) 기준이며, 선은 이미 원 테두리에서 끊기므로 겹치지 않는다."""
+    fig.add_shape(
+        type="circle", xref="x", yref="y", layer="below",
+        x0=x - radius, x1=x + radius, y0=y - radius, y1=y + radius,
+        fillcolor=fillcolor, line=dict(color=linecolor, width=width),
+    )
+
+
+def _add_logo_image(fig, x, y, radius, logo):
+    """원 안에 로고를 앉힌다. logo는 lib/logos.py::get_circular_logo()가 주는
+    {"src":..., "circular": bool} 형태이거나, 그냥 URL 문자열이어도 된다(문자열이면
+    네모난 이미지로 보고 내접시킨다).
+
+    circular=True면 이미지 자체가 원형이라 원을 거의 꽉 채우고, False면 모서리가
+    삐져나오지 않게 내접시킨다. sizing="contain"으로 비율을 보존하므로 어느 쪽이든
+    이미지가 찌그러지지는 않는다. 이미지를 못 받아오면 plotly가 조용히 아무것도 안 그려서
+    자동으로 '빈 원'(로고 기능 추가 전 모습)으로 폴백된다."""
+    if isinstance(logo, str):
+        src, circular = logo, False
+    else:
+        src, circular = logo.get("src"), bool(logo.get("circular"))
+    if not src:
+        return
+    side = radius * (_LOGO_FIT_CIRCULAR if circular else _LOGO_FIT_SQUARE)
+    fig.add_layout_image(
+        source=src, xref="x", yref="y", x=x, y=y,
+        sizex=side, sizey=side, xanchor="center", yanchor="middle",
+        sizing="contain", layer="above", opacity=1,
+    )
+
+
+def _edge_endpoints(x, y):
+    """허브에서 노드로 가는 선을, 양쪽 원의 테두리에서 시작·종료하도록 잘라 반환한다.
+    중심에서 중심으로 그으면 선이 원 내부를 가로질러 로고 위에 겹친다."""
+    dist = math.hypot(x, y) or 1.0
+    ux, uy = x / dist, y / dist
+    start = (ux * _HUB_RADIUS, uy * _HUB_RADIUS)
+    end = (ux * (dist - _NODE_RADIUS), uy * (dist - _NODE_RADIUS))
+    return start, end
 
 
 def _preview_text(headline_tuple):
@@ -99,54 +176,99 @@ def _preview_text(headline_tuple):
     return text
 
 
-def render_relationship_graph_figure(hub_ticker, hub_name, edges):
-    """lib.qualitative.match_counterparties() 결과로 허브(현재 티커) 중심 원형 관계도를
-    그린다. 노드 수가 항상 작아(peer+검색이력 매칭 기준) networkx 등 배치 라이브러리 없이
-    단순 원형 배치로 충분하다. 같은 상대 회사에 대한 여러 엣지는 노드 1개로 합치고,
-    유형(색)·최신 진행상태·근거 신뢰도·헤드라인은 hover에 모아 보여준다.
-    최신 상태가 "철회·무산"이면 점선으로 표시 — 관계가 끝났다는 신호를 거리/색과 별개로
-    선 스타일이라는 독립된 채널로 전달(오독 방지)."""
+def group_relationship_edges(edges):
+    """엣지 목록을 상대 회사 단위로 묶어 (티커, 정보) 리스트를 근거 수·최신순으로 정렬해
+    반환한다. 그래프(상위 N개만)와 그래프 아래 근거 표(전체)가 **같은 그룹핑·같은 정렬**을
+    쓰도록 여기 한 곳에만 둔다 — 예전엔 그래프 함수 안에 묻혀 있어서, 표를 따로 만들면
+    "그래프에 보이는 순서"와 "표의 순서"가 조용히 갈라질 수 있었다.
+
+    news_count/filing_count를 나눠 세는 이유: 근거 표에서 "이 회사는 뉴스로 잡힌 건가,
+    공시로 잡힌 건가"가 신뢰도 판단의 핵심인데, 합계만으로는 구분이 안 되기 때문이다."""
     grouped = {}
     for e in edges:
         g = grouped.setdefault(e["counterparty_ticker"], {
             "name": e["counterparty_name"], "types": [], "headlines": [], "evidence_levels": [],
-            "latest_status": None, "latest_dt": -1,
+            "latest_status": None, "latest_dt": -1, "news_count": 0, "filing_count": 0,
         })
         if e["relationship_type"] not in g["types"]:
             g["types"].append(e["relationship_type"])
         if e.get("evidence_level") and e["evidence_level"] not in g["evidence_levels"]:
             g["evidence_levels"].append(e["evidence_level"])
         dt = e.get("datetime") or 0
-        g["headlines"].append((dt, e["headline"], e.get("url"), e["status"], e.get("context")))
+        # 6번째 원소(relationship_type)는 근거 표에서 "이게 뉴스인지 공시인지"를 판정하는 데
+        # 쓴다 — 상태 문자열("공시 확인")을 문자열 검사로 넘겨짚던 것보다 안전하다.
+        # 앞 5개 순서는 _preview_text()가 인덱스로 참조하므로 바꾸지 말 것.
+        g["headlines"].append((
+            dt, e["headline"], e.get("url"), e["status"], e.get("context"), e["relationship_type"],
+        ))
+        if e["relationship_type"] == "공시상 언급":
+            g["filing_count"] += 1
+        else:
+            g["news_count"] += 1
         if dt >= g["latest_dt"]:
             g["latest_dt"] = dt
             g["latest_status"] = e["status"]
 
-    ordered = sorted(grouped.items(), key=lambda kv: (len(kv[1]["headlines"]), kv[1]["latest_dt"]), reverse=True)
-    ordered = ordered[:MAX_RELATIONSHIP_NODES]
+    return sorted(
+        grouped.items(),
+        key=lambda kv: (len(kv[1]["headlines"]), kv[1]["latest_dt"]),
+        reverse=True,
+    )
+
+
+def _node_positions(count):
+    """허브를 중심으로 12시 방향에서 시계방향으로 노드를 배치한 좌표 목록.
+
+    12시에서 시계방향인 이유는 단순히 읽는 순서와 맞아서다(기존엔 3시에서 반시계방향이라
+    "가장 근거가 많은 회사"가 오른쪽 옆구리에서 시작했다). 노드가 많아지면 반지름을
+    번갈아 바꿔 라벨이 겹치지 않게 한다."""
+    positions = []
+    for i in range(count):
+        angle = math.pi / 2 - 2 * math.pi * i / count
+        radius = _RADIUS_NEAR
+        if count >= _STAGGER_FROM and i % 2 == 1:
+            radius = _RADIUS_FAR
+        positions.append((radius * math.cos(angle), radius * math.sin(angle)))
+    return positions
+
+
+def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None):
+    """허브(현재 티커) 중심 원형 관계도. 노드 수가 항상 작아(상위 10개) networkx 등 배치
+    라이브러리 없이 단순 원형 배치로 충분하다. 같은 상대 회사에 대한 여러 엣지는 노드
+    1개로 합치고, 유형은 색, 최신 진행상태가 "철회·무산"이면 점선으로 표시한다 — 관계가
+    끝났다는 신호를 색과 별개로 선 스타일이라는 독립된 채널로 전달(오독 방지).
+
+    logos: {티커: `lib/logos.py::get_circular_logo()` 결과} — 있으면 노드 원 안에 로고를
+    넣는다. 이 함수는 네트워크를 타지 않는다(순수 렌더링 유지). 로고 수집·가공은 호출부
+    (pages/8_관계도.py)가 담당하고, 없는 티커는 그냥 빠지면 된다 — 로고 없는 노드는 로고
+    기능 추가 전과 똑같이 빈 원으로 그려진다.
+
+    ⚠️ 노드 크기는 근거 개수와 무관하게 전부 같다. 크기로 굵기를 주면 "근거가 많다 =
+    관계가 더 확실하다"는 뜻으로 읽히는데, 그건 이 제품이 하지 않기로 한 집계다(원칙 B).
+    개수는 그래프 아래 근거 표에서 숫자 그대로 확인한다."""
+    logos = logos or {}
+    ordered = group_relationship_edges(edges)[:MAX_RELATIONSHIP_NODES]
 
     fig = go.Figure()
-    n = len(ordered)
-    positions = {
-        ticker: (math.cos(2 * math.pi * i / n), math.sin(2 * math.pi * i / n))
-        for i, (ticker, _) in enumerate(ordered)
-    }
+    coords = _node_positions(len(ordered))
 
     types_present = set()
     any_terminated = False
-    for ticker, g in ordered:
-        x, y = positions[ticker]
+    for (ticker, g), (x, y) in zip(ordered, coords):
         primary_type = g["types"][0]
         types_present.add(primary_type)
         is_terminated = g["latest_status"] == _TERMINATED_STATUS
         any_terminated = any_terminated or is_terminated
+        # 선을 노드 중심까지 긋지 않고 원 테두리에서 끊는다 — 중심까지 그으면 선이 원 안을
+        # 가로질러 로고 위에 겹쳐 보인다(로고를 넣기 전에는 원이 비어 있어 티가 안 나던 부분).
+        (sx, sy), (ex, ey) = _edge_endpoints(x, y)
         fig.add_trace(go.Scatter(
-            x=[0, x], y=[0, y], mode="lines",
+            x=[sx, ex], y=[sy, ey], mode="lines",
             line=dict(
-                width=2, color=_RELATIONSHIP_EDGE_COLORS.get(primary_type, "#999"),
+                width=1.6, color=_RELATIONSHIP_EDGE_COLORS.get(primary_type, "#9aa0a6"),
                 dash="dot" if is_terminated else "solid",
             ),
-            hoverinfo="skip", showlegend=False,
+            opacity=0.75, hoverinfo="skip", showlegend=False,
         ))
 
     # 범례는 실제로 등장한 유형만, 고정된 색 순서로(그래프마다 순서가 흔들리지 않게)
@@ -157,42 +279,86 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges):
             ))
     if any_terminated:
         fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode="lines", line=dict(width=2, color="#999", dash="dot"),
+            x=[None], y=[None], mode="lines", line=dict(width=2, color="#9aa0a6", dash="dot"),
             name="점선 = 철회·무산",
         ))
 
-    fig.add_trace(go.Scatter(
-        x=[0], y=[0], mode="markers+text", text=[hub_ticker], textposition="middle center",
-        marker=dict(size=44, color=_RELATIONSHIP_HUB_COLOR), textfont=dict(color="white", size=13),
-        hovertext=[hub_name], hoverinfo="text", showlegend=False,
-    ))
+    node_x, node_y, node_text, hover_text, text_positions = [], [], [], [], []
+    for (ticker, g), (x, y) in zip(ordered, coords):
+        primary_type = g["types"][0]
+        border = _RELATIONSHIP_EDGE_COLORS.get(primary_type, "#9aa0a6")
+        logo_url = logos.get(ticker)
+        # 로고가 있으면 원 안쪽은 흰색으로 — 옅은 색조 위에 로고를 얹으면 로고의 흰 배경과
+        # 원 배경이 어긋나 얼룩덜룩해 보인다. 로고가 없으면 기존처럼 유형별 옅은 색조를 쓴다.
+        fill = "white" if logo_url else _RELATIONSHIP_NODE_FILLS.get(primary_type, "#f1f2f4")
+        _add_node_circle(fig, x, y, _NODE_RADIUS, fill, border, width=2)
+        if logo_url:
+            _add_logo_image(fig, x, y, _NODE_RADIUS, logo_url)
 
-    node_x, node_y, node_text, hover_text = [], [], [], []
-    for ticker, g in ordered:
-        x, y = positions[ticker]
         node_x.append(x)
         node_y.append(y)
         node_text.append(ticker)
+        # 라벨은 로고 유무와 무관하게 항상 원 바깥(허브 반대편)에 둔다 — 로고만으로는 어느
+        # 회사인지 못 알아보는 경우가 많고, 로고 있는 노드와 없는 노드의 라벨 위치가 달라지면
+        # 눈이 훑을 때 줄이 안 맞아 더 어수선해진다.
+        text_positions.append("top center" if y >= 0 else "bottom center")
+
         headlines_preview = "<br>".join(
-            f"· [{h[3]}] {_preview_text(h)}" for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:5]
+            f"· [{h[3]}] {_preview_text(h)}"
+            for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:3]
         )
-        evidence_str = " / ".join(g["evidence_levels"]) or "근거 불명"
+        source_str = " · ".join(filter(None, [
+            f"뉴스 {g['news_count']}건" if g["news_count"] else "",
+            f"공시 {g['filing_count']}건" if g["filing_count"] else "",
+        ]))
         hover_text.append(
-            f"<b>{g['name'] or ticker}</b><br>{', '.join(g['types'])} · 최신 상태: {g['latest_status']}"
-            f"<br>신뢰도: {evidence_str}<br>{headlines_preview}"
+            f"<b>{g['name'] or ticker}</b> ({ticker})<br>{', '.join(g['types'])}"
+            f" · 최신 상태: {g['latest_status']}<br>근거: {source_str}"
+            f"<br><br>{headlines_preview}<br><br><i>원문 링크는 그래프 아래 표에 있습니다</i>"
         )
+
+    # 원은 shape으로 그렸으므로, 이 trace는 (1) 라벨 (2) hover 판정 영역 역할만 한다.
+    # 마커를 완전 투명하게 두는 이유: 원 위에 또 원을 겹쳐 그리면 테두리가 두 겹으로 보인다.
+    # 투명해도 hover 판정은 살아있다.
     fig.add_trace(go.Scatter(
-        x=node_x, y=node_y, mode="markers+text", text=node_text, textposition="bottom center",
-        marker=dict(size=30, color="#f0f2f6", line=dict(width=2, color="#999")),
+        x=node_x, y=node_y, mode="markers+text", text=node_text, textposition=text_positions,
+        marker=dict(size=38, color="rgba(0,0,0,0)"),
+        textfont=dict(size=12, color="#3c4043"),
         hovertext=hover_text, hoverinfo="text", showlegend=False,
     ))
 
-    fig.update_xaxes(visible=False, range=[-1.5, 1.5])
-    fig.update_yaxes(visible=False, range=[-1.5, 1.5], scaleanchor="x", scaleratio=1)
+    # 허브 — 로고가 있으면 흰 원 + 굵은 파란 테두리(중심임을 테두리로 표현), 없으면 예전처럼
+    # 파랑으로 꽉 채우고 흰 글씨로 티커를 넣는다.
+    hub_logo = logos.get(hub_ticker)
+    if hub_logo:
+        _add_node_circle(fig, 0, 0, _HUB_RADIUS, "white", _RELATIONSHIP_HUB_COLOR, width=4)
+        _add_logo_image(fig, 0, 0, _HUB_RADIUS, hub_logo)
+        fig.add_trace(go.Scatter(
+            x=[0], y=[0], mode="markers+text", text=[hub_ticker], textposition="bottom center",
+            marker=dict(size=52, color="rgba(0,0,0,0)"),
+            textfont=dict(size=13, color=_RELATIONSHIP_HUB_COLOR, family="Arial Black, sans-serif"),
+            hovertext=[hub_name], hoverinfo="text", showlegend=False,
+        ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=[0], y=[0], mode="markers+text", text=[hub_ticker], textposition="middle center",
+            marker=dict(size=52, color=_RELATIONSHIP_HUB_COLOR, line=dict(width=3, color="white")),
+            textfont=dict(color="white", size=13, family="Arial Black, sans-serif"),
+            hovertext=[hub_name], hoverinfo="text", showlegend=False,
+        ))
+
+    # 라벨이 노드 바깥에 붙으므로 축 범위를 반지름보다 넉넉히 잡아야 잘리지 않는다
+    span = _RADIUS_FAR + _NODE_RADIUS + 0.42
+    fig.update_xaxes(visible=False, range=[-span, span])
+    fig.update_yaxes(visible=False, range=[-span, span], scaleanchor="x", scaleratio=1)
     fig.update_layout(
-        height=420,
+        height=520,
         margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01, x=0.5, xanchor="center",
+            font=dict(size=11), bgcolor="rgba(0,0,0,0)",
+        ),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        hoverlabel=dict(align="left", bgcolor="white", font=dict(size=12)),
     )
     return fig

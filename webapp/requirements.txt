@@ -9,3 +9,6 @@ python-dateutil
 numpy
 deep-translator
 plotly
+# streamlit이 이미 의존하고 있지만, 관계도 로고 원형 크롭(lib/logos.py)에서 직접 쓰므로
+# 간접 의존에 기대지 않고 명시한다
+pillow

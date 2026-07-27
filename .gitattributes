@@ -1,0 +1,16 @@
+# 줄바꿈 정규화 — Windows 에디터/도구가 파일을 CRLF로 다시 저장하면 내용 변화가 0인데도
+# git diff에 파일 전체가 수정된 것처럼 잡힌다(실제로 2026-07-27 pages/ 6개 파일에서 발생:
+# `git diff -w` 결과는 완전히 비어있는데 통계상 1013줄 삭제/530줄 추가로 표시됨).
+# 여러 도구가 같은 저장소를 병행 편집하는 환경이라 저장소 기준을 LF로 못박는다.
+* text=auto eol=lf
+
+# 바이너리로 취급 — 줄바꿈 변환 대상에서 제외
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.pptx binary
+*.docx binary

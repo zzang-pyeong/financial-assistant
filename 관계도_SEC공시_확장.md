@@ -84,4 +84,5 @@
 
 - 신규: `webapp/lib/sec_filings.py`
 - 수정: `webapp/pages/8_관계도.py`(지연 로딩+병합), `webapp/lib/charts.py`("공시상 언급" 색상 +
-  근거수준 표시 버그 수정), `PRD_EnterTicker.md`(6.8/8/11절)
+  근거수준 표시 버그 수정), 당시 `PRD_EnterTicker.md`(6.8/8/11절 — 이 PRD는 2026-07-27
+  `docs/PRD.md`+`docs/AS_BUILT_TECH_SPEC.md`+`docs/CHANGELOG.md`로 분리된 뒤 삭제됨)

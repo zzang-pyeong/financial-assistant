@@ -14,6 +14,7 @@
 까지만 표시하고, 실제 문맥은 사용자가 링크를 눌러 원문에서 직접 확인해야 한다(과확신 방지).
 """
 
+import codecs
 import html
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -262,53 +263,143 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
 
 # ---------------------------------------------------------------------------
 # 문맥 추출 — 검색 API는 스니펫을 안 줘서(실측 확인), 문서 원문을 받아 회사명 주변을
-# 직접 잘라낸다. re + html(둘 다 표준 라이브러리)만 사용 — 새 의존성 없음.
+# 직접 잘라낸다. re + html + codecs(전부 표준 라이브러리)만 사용 — 새 의존성 없음.
+#
+# 2026-07-27 비용 최적화. 이전 구현에는 문제가 셋 있었다:
+#   1) 문서를 통째로 받았다 — 10-K는 5~20MB가 흔한데, 우리가 필요한 건 회사명 주변
+#      360자뿐이다. 상위 20개 회사면 수백 MB를 받아놓고 거의 다 버리는 셈이었다.
+#   2) 그 수 MB짜리 정제 텍스트 전체를 @st.cache_data에 넣었다 — Streamlit 캐시가
+#      티커·회사 조합마다 부풀어 올랐다.
+#   3) 그 캐시 함수를 ThreadPoolExecutor 워커에서 호출했다 — st.cache_data는 스크립트
+#      실행 컨텍스트를 기대해서 워커 스레드에서 부르면 ScriptRunContext 경고가 난다.
+# 그래서 (1) 스트리밍으로 받다가 회사명을 찾는 즉시 연결을 끊고 (2) 캐시는 결과 스니펫
+# (수백 바이트)만 (3) Streamlit에 의존하지 않는 평범한 dict으로 들고 있게 바꿨다.
 # ---------------------------------------------------------------------------
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
-_MAX_SNIPPET_COMPANIES = 20
+
+# 그래프에 표시되는 노드 수와 맞춘다(lib/charts.py::MAX_RELATIONSHIP_NODES = 10).
+# 이전엔 "여유 있게" 20개를 받았는데, 표시도 안 되는 10개분 문서를 더 받는 낭비였다.
+# 그래프 아래 근거 표는 스니펫 없이 링크·헤드라인만 쓰므로 추가 다운로드가 필요 없다.
+_MAX_SNIPPET_COMPANIES = 10
+
+# 스트리밍 중 이 크기를 넘게 읽었는데도 회사명을 못 찾으면 포기한다(비정상적으로 큰
+# 첨부가 붙은 공시로부터 스스로를 보호). 실측상 회사명은 보통 앞쪽 수백 KB 안에 나온다.
+_MAX_FILING_BYTES = 6 * 1024 * 1024
+_STREAM_CHUNK = 64 * 1024
+
+# 스니펫 캐시 — 제출된 공시는 내용이 안 바뀌므로 (url, 회사명) → 스니펫은 영구히 유효하다.
+# st.cache_data 대신 평범한 dict을 쓰는 이유는 위 주석 (3)번(워커 스레드 호출) 때문.
+_SNIPPET_CACHE = {}
+_SNIPPET_CACHE_MAX = 2000
 
 
-@st.cache_data(ttl=2592000, show_spinner=False)
-def _fetch_filing_text(url):
-    """공시 문서 원문을 받아 태그 제거 + 엔티티 디코딩한 순수 텍스트로 반환. 제출된
-    공시는 내용이 안 바뀌므로 30일 캐시(검색 인덱스 캐시보다 훨씬 길게 잡아도 안전).
-    실패 시 빈 문자열(다른 lib 함수들과 동일한 조용한 실패 패턴)."""
+def _clean_fragment(fragment):
+    """HTML 조각에서 태그를 벗기고 엔티티를 풀어 공백을 정규화한다."""
+    text = _SCRIPT_STYLE_RE.sub(" ", fragment)
+    text = _ANY_TAG_RE.sub(" ", text)
+    return re.sub(r"\s+", " ", html.unescape(text))
+
+
+def _safe_split_point(raw):
+    """조각 끝에 태그가 잘려 걸쳐 있으면(예: "...<td cla") 그 앞까지만 이번에 처리하고
+    나머지는 다음 조각과 이어 붙이도록, 안전하게 자를 수 있는 위치를 돌려준다.
+    이걸 안 하면 청크 경계에서 태그가 반토막 나 스니펫에 '<td class=' 같은 게 섞인다."""
+    last_open = raw.rfind("<")
+    if last_open == -1:
+        return len(raw)
+    # 마지막 '<' 뒤에 '>'가 있으면 그 태그는 이미 닫힌 것 — 통째로 처리해도 안전
+    return len(raw) if raw.find(">", last_open) != -1 else last_open
+
+
+def _stream_find_context(url, phrases, window=180):
+    """공시 문서를 스트리밍으로 받으면서 phrases 중 하나가 나오는 즉시 그 주변
+    ±window자를 잘라 반환하고 연결을 끊는다. 못 찾으면 None.
+
+    전체를 받아 한 번에 처리하지 않는 이유는 위 모듈 주석 참조 — 10-K 한 건이 수 MB인데
+    실제로 쓰는 건 수백 자뿐이라, 찾은 시점에 멈추면 대부분의 문서에서 앞부분만 받고 끝난다."""
+    if not phrases:
+        return None
+    longest = max(len(p) for p in phrases)
+    # 매칭 지점 앞쪽 문맥과, 청크 경계에 걸친 회사명을 놓치지 않을 만큼은 남겨둔다
+    keep = window + longest + 32
+
+    lowered = [(p, p.lower()) for p in phrases]
+    tail = ""
+    carry = ""
+    trimmed = False
+    found_at = None
+    found_len = 0
+    total = 0
+
     try:
-        r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=15)
-        text = _SCRIPT_STYLE_RE.sub(" ", r.text)
-        text = _ANY_TAG_RE.sub(" ", text)
-        text = html.unescape(text)
-        return re.sub(r"\s+", " ", text).strip()
+        with requests.get(
+            url, headers={"User-Agent": _USER_AGENT}, timeout=15, stream=True,
+        ) as r:
+            # 멀티바이트 문자가 청크 경계에 걸쳐 깨지지 않도록 증분 디코더 사용
+            decoder = codecs.getincrementaldecoder(r.encoding or "utf-8")(errors="ignore")
+            for chunk in r.iter_content(chunk_size=_STREAM_CHUNK):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                raw = carry + decoder.decode(chunk)
+                cut = _safe_split_point(raw)
+                carry = raw[cut:]
+                tail += _clean_fragment(raw[:cut])
+
+                if found_at is None:
+                    low = tail.lower()
+                    for phrase, phrase_low in lowered:
+                        idx = low.find(phrase_low)
+                        if idx != -1:
+                            found_at, found_len = idx, len(phrase)
+                            break
+
+                if found_at is not None:
+                    # 매칭 뒤쪽 문맥까지 다 모였으면 더 받을 이유가 없다 — 여기서 끊는다
+                    if len(tail) >= found_at + found_len + window:
+                        break
+                else:
+                    if len(tail) > keep:
+                        tail = tail[-keep:]
+                        trimmed = True
+                    if total > _MAX_FILING_BYTES:
+                        return None
     except Exception:
-        return ""
+        return None
+
+    if found_at is None:
+        return None
+
+    start = max(0, found_at - window)
+    end = min(len(tail), found_at + found_len + window)
+    prefix = "…" if (start > 0 or trimmed) else ""
+    suffix = "…" if end < len(tail) else "…"  # 중간에 끊고 나왔으므로 뒤는 항상 이어짐
+    return prefix + tail[start:end].strip() + suffix
 
 
 def _extract_context_snippet(url, company_name, window=180):
-    """문서 원문에서 회사명이 등장하는 위치 주변 ±window자를 잘라 반환. 정식명부터
-    순서대로 시도해 가장 구체적인 문맥을 우선 채택(검색 때 어떤 단계로 매칭됐는지와
-    무관하게, 문서 안에서 실제로 찾을 수 있는 표기를 그대로 씀). 못 찾으면 None."""
-    text = _fetch_filing_text(url)
-    if not text:
-        return None
-    text_lower = text.lower()
-    for phrase in _filing_search_candidates(company_name):
-        idx = text_lower.find(phrase.lower())
-        if idx == -1:
-            continue
-        start = max(0, idx - window)
-        end = min(len(text), idx + len(phrase) + window)
-        prefix = "…" if start > 0 else ""
-        suffix = "…" if end < len(text) else ""
-        return prefix + text[start:end].strip() + suffix
-    return None
+    """문서에서 회사명 주변 문맥을 뽑아 반환. 정식 법인명부터 순서대로 시도해 가장 구체적인
+    표기를 우선 채택한다(검색 때 어떤 축약 단계로 매칭됐는지와 무관하게, 문서 안에 실제로
+    적힌 표기를 그대로 쓰기 위함). 못 찾거나 실패하면 None."""
+    key = (url, company_name)
+    if key in _SNIPPET_CACHE:
+        return _SNIPPET_CACHE[key]
+
+    snippet = _stream_find_context(url, _filing_search_candidates(company_name), window)
+
+    if len(_SNIPPET_CACHE) >= _SNIPPET_CACHE_MAX:
+        for k in list(_SNIPPET_CACHE)[: _SNIPPET_CACHE_MAX // 5]:
+            _SNIPPET_CACHE.pop(k, None)
+    _SNIPPET_CACHE[key] = snippet
+    return snippet
 
 
 def attach_context_snippets(filing_edges, max_companies=_MAX_SNIPPET_COMPANIES):
     """filing_edges(find_filing_relationships 결과)를 상대 회사별로 묶어, 회사당 가장
     최근 엣지 1건에 대해서만 문서를 받아 문맥을 채운다(회사당 여러 건이어도 문서 1건만
     받아 대역폭 절약). 히트 수·최신순으로 정렬해 상위 max_companies개까지만 처리 —
-    그래프에 어차피 상위 10개만 표시되므로(MAX_RELATIONSHIP_NODES) 여유 있게 20개.
+    그래프에 표시되는 노드 수와 같은 개수다(_MAX_SNIPPET_COMPANIES 주석 참조).
     문맥을 못 얻은 엣지는 그대로 두어(수정 없이) 기존 일반 문구로 자연스럽게 폴백."""
     if not filing_edges:
         return filing_edges

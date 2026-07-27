@@ -5,8 +5,8 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.translate import to_korean
-from lib.config import ANALYST_NEWS_LOOKBACK_DAYS
+from lib.translate import to_korean, prefetch_korean
+from lib.config import ANALYST_NEWS_LOOKBACK_DAYS, CORPORATE_EVENT_DISPLAY_LIMIT
 from lib.page_helpers import require_analysis, news_date_str, inject_base_styles, render_wordmark
 from lib.search import render_sidebar
 
@@ -30,7 +30,11 @@ st.caption(
 )
 corporate_events = st.session_state.get("corporate_events", [])
 if corporate_events:
-    for ev in corporate_events[:10]:
+    shown = corporate_events[:CORPORATE_EVENT_DISPLAY_LIMIT]
+    # 표시할 헤드라인을 먼저 한꺼번에 병렬 번역 (Analyst News 페이지와 같은 이유)
+    with st.spinner("헤드라인 번역 중..."):
+        prefetch_korean([ev["headline"] for ev in shown])
+    for ev in shown:
         cats = ", ".join(f"{c['category']}({', '.join(c['matched'])})" for c in ev["categories"])
         headline = to_korean(ev["headline"])
         title = f"[{headline}]({ev['url']})" if ev.get("url") else headline

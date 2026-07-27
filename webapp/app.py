@@ -11,6 +11,7 @@ from lib.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
 from lib.translate import to_korean
 from lib.page_helpers import inject_base_styles, render_wordmark, news_date_str
 from lib.search import fetch_and_store_ticker, render_sidebar
+from lib.config import BOARD_NEWS_LIMIT
 
 if "step" not in st.session_state:
     st.session_state.step = "search"
@@ -100,8 +101,10 @@ def collect_bull_bear_lines():
         (qual_bull if analyst_trend["lean"] == "bullish" else qual_bear).append(line)
 
     # 헤드라인 하나당 번역 API 호출 1회 — 전체를 다 돌면(수백 건) 화면이 오래 멈춰 보이므로
-    # 최신 순으로 일정 개수만 번역/표시 대상으로 삼는다.
-    for n in st.session_state.news_classified[:30]:
+    # 최신 순으로 일정 개수만 번역/표시 대상으로 삼는다. 이 개수는 fetch_and_store_ticker()가
+    # 수집 단계에서 미리 병렬 번역해두는 개수(BOARD_NEWS_LIMIT)와 반드시 같아야 한다 —
+    # 여기서 더 많이 돌면 초과분이 캐시 미스가 나서 렌더 도중 순차 요청이 다시 발생한다.
+    for n in st.session_state.news_classified[:BOARD_NEWS_LIMIT]:
         date_str = news_date_str(n)
         date_part = f" ({date_str})" if date_str else ""
         line = f"뉴스: {news_headline_link(n)}{date_part}"

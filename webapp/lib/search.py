@@ -17,8 +17,9 @@ from lib.qualitative import (
     classify_news_tone, news_tone_summary, classify_analyst_trend,
     filter_analyst_related_news, filter_corporate_event_news, match_counterparties,
 )
-from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS
+from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS, BOARD_NEWS_LIMIT
 from lib.known_companies import STATIC_KNOWN_COMPANIES
+from lib.translate import prefetch_korean
 
 MAX_SEARCH_HISTORY = 30
 
@@ -110,6 +111,16 @@ def fetch_and_store_ticker(raw_input):
         except Exception as e:
             st.error(f"데이터 수집 중 오류: {e}")
             return False
+
+    # 번역은 수집이 다 끝난 뒤 별도 스피너로 — Conflict Board가 렌더될 때 헤드라인마다
+    # to_korean()이 순차 HTTP 요청을 보내던 것을 여기서 미리 병렬로 채운다. 예전에는 이
+    # 대기가 스피너 밖(렌더 도중)에 있어서 아무 안내 없이 화면이 굳은 것처럼 보였다.
+    # 번역 실패는 원문 폴백으로 흡수되므로 여기서 검색 자체를 실패시키지 않는다.
+    try:
+        with st.spinner("뉴스 헤드라인 번역 중..."):
+            prefetch_korean([n["headline"] for n in news_classified[:BOARD_NEWS_LIMIT]])
+    except Exception:
+        pass
 
     # 새 종목 검색 — 이전 종목의 포지션 의도·메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
     for k in (
