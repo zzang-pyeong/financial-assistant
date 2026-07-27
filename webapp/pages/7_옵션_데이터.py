@@ -19,13 +19,14 @@ with st.sidebar:
     render_sidebar()
 
 ticker = st.session_state.ticker
-render_wordmark("Options", "Data")
-st.caption(ticker)
-st.caption(
-    "⚠️ '지금 이 순간'의 스냅샷입니다. 과거 추이가 아니라, 앞으로 6개월 이내 만기가 도래할 "
-    "옵션들의 현재 미결제약정(OI)·거래량을 보여줍니다."
-)
-st.page_link("app.py", label="← Back to Search", icon="🏠")
+with st.container(key="page_header"):
+    render_wordmark("Options", "Data", align="center")
+    st.caption(ticker)
+    st.caption(
+        "⚠️ '지금 이 순간'의 스냅샷입니다. 과거 추이가 아니라, 앞으로 6개월 이내 만기가 도래할 "
+        "옵션들의 현재 미결제약정(OI)·거래량을 보여줍니다."
+    )
+    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 expirations = get_option_expirations(ticker)

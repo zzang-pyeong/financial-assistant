@@ -162,7 +162,6 @@ def render_sidebar_search():
 # 사이드바 네비게이션 — 자동 네비(showSidebarNavigation=false)를 끈 대신 전 페이지에서 공통 사용
 _SIDEBAR_PAGES = [
     ("pages/1_차트.py", "Price Chart", "📈"),
-    ("pages/2_Peer_목록.py", "Peer List", "📋"),
     ("pages/3_섹터_Peer_비교.py", "Peer Compare", "📊"),
     ("pages/4_소유구조.py", "Ownership Map", "🏛️"),
     ("pages/5_애널리스트_뉴스.py", "Analyst News", "📰"),
@@ -178,7 +177,41 @@ def render_sidebar_nav():
         st.page_link(path, label=label, icon=icon)
 
 
+def reset_session():
+    """세션 상태 전체 초기화 후 검색 화면으로."""
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.session_state.step = "search"
+    st.rerun()
+
+
+def render_sidebar_reset():
+    """검색창 바로 위, 눈에 띄지 않는 작은 글씨로 배치하는 세션 초기화 링크.
+    페이지 네비게이션(st.page_link)과 다르게 테두리 없는 tertiary 버튼 + 톤다운된 회색으로
+    존재감을 낮추고, hover 시에만 경고색(빨강)이 드러나게 해 '이동'이 아니라 '되돌릴 수
+    없는 액션'임을 암시한다."""
+    if st.session_state.get("step", "search") == "search":
+        return
+    with st.sidebar.container(key="reset_session_container"):
+        if st.button("↺ 시작화면으로", key="reset_session_btn", type="tertiary"):
+            reset_session()
+    st.markdown(
+        "<style>"
+        "div.st-key-reset_session_container button {"
+        "  color: #9096a2 !important; font-size: 0.8rem !important;"
+        "  padding: 0 0 0.3rem 0 !important;"
+        "}"
+        "div.st-key-reset_session_container button:hover {"
+        "  color: #e5484d !important;"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_sidebar():
-    """검색창 + 전체 페이지 네비게이션 — app.py와 모든 서브페이지 사이드바에서 공통 사용."""
+    """세션 초기화 링크 + 검색창 + 전체 페이지 네비게이션 — app.py와 모든 서브페이지
+    사이드바에서 공통 사용."""
+    render_sidebar_reset()
     render_sidebar_search()
     render_sidebar_nav()

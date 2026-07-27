@@ -18,9 +18,10 @@ with st.sidebar:
     render_sidebar()
 
 ticker = st.session_state.ticker
-render_wordmark("Price", "Chart")
-st.caption(ticker)
-st.page_link("app.py", label="← Back to Search", icon="🏠")
+with st.container(key="page_header"):
+    render_wordmark("Price", "Chart", align="center")
+    st.caption(ticker)
+    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 list_col, chart_col = st.columns([1, 5])

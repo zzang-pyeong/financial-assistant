@@ -1,14 +1,25 @@
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.peers import tier1_stats, runway_interpretation, quick_ratio_interpretation, roe_interpretation
+from lib.peers import (
+    tier1_stats, runway_interpretation, quick_ratio_interpretation, roe_interpretation,
+    current_ratio_interpretation, format_pct, ev_ebitda_interpretation,
+)
 from lib.glossary import render_glossary
 from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
 from lib.search import render_sidebar
+
+_BASIS_KO = {
+    "same industry": "동일 산업",
+    "same sector + cap band": "동일 섹터·시총",
+    "niche keyword": "니치 키워드",
+    "": "—",
+}
 
 st.set_page_config(page_title="Peer Compare — EnterTicker", layout="wide")
 inject_base_styles()
@@ -18,9 +29,10 @@ with st.sidebar:
     render_sidebar()
 
 ticker = st.session_state.ticker
-render_wordmark("Peer", "Compare")
-st.caption(ticker)
-st.page_link("app.py", label="← Back to Search", icon="🏠")
+with st.container(key="page_header"):
+    render_wordmark("Peer", "Compare", align="center")
+    st.caption(ticker)
+    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 peer_data = st.session_state.peer_data
@@ -46,15 +58,49 @@ with st.expander(f"{ticker} 재무 건전성 (Peer 비교 보완)", expanded=Tru
     ev_str = f"{target_health['ev_revenue']:.1f}" if isinstance(target_health['ev_revenue'], (int, float)) else "N/A"
     qr = target_health['quick_ratio']
     st.write(f"EV/Revenue: **{ev_str}**  ·  당좌비율: **{qr:.2f}**" if isinstance(qr, (int, float)) else f"EV/Revenue: **{ev_str}**")
+    st.write(f"EV/EBITDA: **{ev_ebitda_interpretation(target_health['ev_ebitda'])}**")
     st.write(f"현금 런웨이: **{runway_interpretation(target_health)}**")
     if isinstance(qr, (int, float)):
         st.caption(f"당좌비율 판정: {quick_ratio_interpretation(qr)}")
+    cr = target_health['current_ratio']
+    if isinstance(cr, (int, float)):
+        st.write(f"유동비율: **{cr:.2f}** — {current_ratio_interpretation(cr)}")
     pbr_str = f"{target_health['pbr']:.2f}" if isinstance(target_health['pbr'], (int, float)) else "N/A"
     de_str = f"{target_health['debt_to_equity']:.1f}" if isinstance(target_health['debt_to_equity'], (int, float)) else "N/A"
     st.write(f"PBR: **{pbr_str}**  ·  부채비율(D/E): **{de_str}**")
     st.write(f"ROE: **{roe_interpretation(target_health['roe'], target_health['debt_to_equity'])}**")
+    om_str = format_pct(target_health['operating_margin']) or "N/A"
+    gm_str = format_pct(target_health['gross_margin']) or "N/A"
+    st.write(f"영업이익률: **{om_str}**  ·  매출총이익률: **{gm_str}**")
+    rg_str = format_pct(target_health['revenue_growth_yoy']) or "N/A"
+    st.write(f"매출성장률(YoY): **{rg_str}**")
+
+with st.expander("📋 전체 Peer 목록 (Tier1+Tier2)"):
+    rows = []
+    for p in sorted(peer_data["peers"], key=lambda x: x["tier"]):
+        h = p["health"]
+        runway_str = "흑자" if h["fcf_positive"] else (f"{h['runway_months']:.0f}개월" if h["runway_months"] is not None else "·")
+        rows.append({
+            "Tier": "Tier1" if p["tier"] == 1 else "Tier2",
+            "근거": _BASIS_KO.get(p.get("tier_basis", ""), "—"),
+            "티커": p["ticker"],
+            "기업명": p["name"],
+            "Forward PE": round(p["forwardPE"], 1) if isinstance(p["forwardPE"], (int, float)) else None,
+            "EV/Revenue": round(h["ev_revenue"], 1) if isinstance(h["ev_revenue"], (int, float)) else None,
+            "EV/EBITDA": ev_ebitda_interpretation(h["ev_ebitda"]),
+            "당좌비율": round(h["quick_ratio"], 2) if isinstance(h["quick_ratio"], (int, float)) else None,
+            "유동비율": round(h["current_ratio"], 2) if isinstance(h["current_ratio"], (int, float)) else None,
+            "영업이익률": format_pct(h["operating_margin"]),
+            "매출총이익률": format_pct(h["gross_margin"]),
+            "매출성장률(YoY)": format_pct(h["revenue_growth_yoy"]),
+            "현금 런웨이": runway_str,
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 render_glossary(
-    ["Forward PER", "PBR", "ROE", "EV/Revenue", "유동비율·당좌비율", "부채비율(D/E)", "현금 런웨이"],
+    [
+        "Forward PER", "PBR", "ROE", "EV/Revenue", "EV/EBITDA", "유동비율·당좌비율",
+        "부채비율(D/E)", "영업이익률", "매출총이익률", "매출성장률(YoY)", "현금 런웨이",
+    ],
     title="ℹ️ 펀더멘털 지표 설명",
 )

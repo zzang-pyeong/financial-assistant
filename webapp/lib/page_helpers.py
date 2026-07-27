@@ -23,6 +23,9 @@ def inject_base_styles():
         "  content: '\\1F310'; display: inline-block; font-size: 1.15rem;"
         "  animation: spin-emoji 1.1s linear infinite;"
         "}"
+        "div.st-key-page_header { text-align: center; }"
+        "div.st-key-page_header [data-testid='stCaptionContainer'] { justify-content: center; }"
+        "div.st-key-page_header [data-testid='stPageLink'] { justify-content: center; }"
         "</style>",
         unsafe_allow_html=True,
     )

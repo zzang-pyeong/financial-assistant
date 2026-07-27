@@ -23,9 +23,10 @@ with st.sidebar:
     render_sidebar()
 
 ticker = st.session_state.ticker
-render_wordmark("Ownership", "Map")
-st.caption(ticker)
-st.page_link("app.py", label="← Back to Search", icon="🏠")
+with st.container(key="page_header"):
+    render_wordmark("Ownership", "Map", align="center")
+    st.caption(ticker)
+    st.page_link("app.py", label="← Back to Search", icon="🏠")
 st.divider()
 
 own = st.session_state.ownership
@@ -52,6 +53,20 @@ if own["institutions_pct"] is not None:
 if own["insiders_pct"] is not None:
     summary_rows.append({"지표": "내부자 보유율", "값": f"{own['insiders_pct']*100:.1f}%"})
     interpretation_lines.append(("내부자 보유율", insider_pct_interpretation(own["insiders_pct"])))
+if own["institutions_pct"] is not None and own["insiders_pct"] is not None:
+    # 기관(13F 공시)·내부자(Form 3/4/5 공시)는 서로 다른 제도라 둘을 더해도 100%가 안 됨 —
+    # 실측: NVDA 75.5%, AAPL 68.1%, TSLA 61.5%, USAR 65.5%, AMD 74.5% (전부 미달).
+    # 나머지를 "개인 보유율"로 단정하면 안 되므로 그 자체를 지표로 보여줌.
+    combined = own["institutions_pct"] + own["insiders_pct"]
+    summary_rows.append({"지표": "기관+내부자 합계", "값": f"{combined*100:.1f}%"})
+    interpretation_lines.append((
+        "기관+내부자 합계",
+        f"나머지 {(1 - combined)*100:.1f}%는 '개인 투자자 보유율'이 아니라 두 공시 제도"
+        "(기관=13F, 내부자=Form 3·4·5) 어디에도 안 잡히는 나머지입니다 — 소규모 리테일 "
+        "투자자, 13F 신고 문턱(운용자산 1억 달러) 미만 소형 기관, 일부 해외 보유분 등이 "
+        "섞여 있어 이 차이만으로 개인 보유 비중을 단정할 수 없습니다. (두 수치는 서로 다른 "
+        "공시 제도 기반이라 드물게 겹쳐서 100%를 넘는 경우도 있을 수 있습니다.)",
+    ))
 if own["short_pct_float"] is not None:
     summary_rows.append({"지표": "공매도 비율", "값": f"{own['short_pct_float']*100:.1f}%"})
     interpretation_lines.append((

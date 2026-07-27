@@ -1,6 +1,9 @@
 # 논의용 초안: Peer 비교 지표 확장
 
-> 2026-07-25 작성. **아직 `lib/peers.py`에 반영 안 됨** — 우선순위 확인 후 진행 예정.
+> 2026-07-25 작성, 2026-07-27 **구현 완료**. 1순위(Current Ratio, Operating Margin,
+> Gross Margin) + 2순위(EV/EBITDA, Revenue Growth YoY) 전부 `lib/peers.py::get_financial_health()`,
+> `pages/2_Peer_목록.py`, `pages/3_섹터_Peer_비교.py`, `lib/glossary.py`에 반영됨.
+> 아래 실측 표·우선순위 논의는 그 결정의 근거 기록으로 남겨둠(3순위는 여전히 보류).
 > Perplexity 분석에서 제안된 후보 목록에, 실제 티커 5개로 yfinance 채움률을 실측해 추가함.
 
 ## 현재 지표 (7개)
@@ -52,10 +55,22 @@ PRD에서도 "trailing PE 채움률 2/7, PEG 2/7"로 이익 기반 지표가 무
 ## 확인이 필요한 사항 (원안 그대로)
 
 1. ~~yfinance에서 어떤 지표가 신뢰성 있게 제공되는지~~ → 위 표로 확인 완료
-2. Tier1 표본이 적을 때(n<3) 평균 대신 어떤 표기를 쓸지 (기존 Forward PE와 동일한 처리 방식 유지 예정 — "표본 부족" 캡션)
-3. 지표 수가 늘어나면 UI를 expander로 카테고리별(밸류에이션/수익성/재무건전성/주주환원) 분리할지
+2. Tier1 표본이 적을 때(n<3) 평균 대신 어떤 표기를 쓸지 → 기존 Forward PE와 동일한 처리
+   방식 유지("표본 부족" 캡션), 새 지표들은 Tier1 평균 계산에 안 들어가서 해당 없음
+3. **지표 수가 늘어나면 UI를 expander로 카테고리별 분리할지 — 미결정, 보류.** 이번엔
+   Peer List 테이블에 컬럼만 추가(총 13개 컬럼, 가로 스크롤로 대응), Peer Compare
+   expander도 기존 흐름에 줄만 추가하는 방식으로 최소 변경. 지표가 더 늘어나면 다시 논의 필요
 
-## 결정 필요
+## 결정 (2026-07-27, 구현 완료)
 
-위 우선순위 제안이 맞는지, 1순위(Current Ratio + Operating/Gross Margin)부터 먼저 넣고
-나머지는 보류할지 확인 부탁드립니다. 확정되면 `lib/peers.py::get_financial_health()`에 반영.
+1순위(Current Ratio, Operating Margin, Gross Margin) + 2순위(EV/EBITDA, Revenue Growth
+YoY) **전부** 반영하기로 결정, `lib/peers.py::get_financial_health()`/`current_ratio_interpretation()`/
+`format_pct()`/`ev_ebitda_interpretation()`에 구현. USAR로 실측 검증:
+- EV/EBITDA -19.6 → "적자(EBITDA 음수) — 배수 무의미"로 정상 표기(숫자 그대로 노출 시
+  저평가로 오독할 위험 방지)
+- Revenue Growth YoY 결측(None) → "N/A" 정상 표기
+- IREN의 Revenue Growth `-0.0`은 결측 대체값이 아니라 실제 값으로 확인(`totalRevenue`
+  존재) → `format_pct()`가 "-0.0%"로 안 보이게 0.0%로 정규화
+
+3순위(P/S, Trailing PE/PEG, Dividend Yield/Payout Ratio)와 보류 항목(P/FCF, 이자보상배율,
+자사주매입)은 이번엔 손대지 않음 — 필요해지면 다시 논의.

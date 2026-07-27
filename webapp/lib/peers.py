@@ -6,6 +6,9 @@ RUNWAY_RISK_MONTHS = 6
 RUNWAY_CAUTION_MONTHS = 12
 QUICK_RATIO_RISK = 0.5
 QUICK_RATIO_GOOD = 1.0
+# 유동비율은 재고까지 포함해 당좌비율보다 자연히 높게 나오므로 기준선을 한 단계 위로 잡음
+CURRENT_RATIO_RISK = 1.0
+CURRENT_RATIO_GOOD = 1.5
 
 # Peer tier 판정 — 동일 섹터 폴백 시 시가총액 밴드(대상의 0.1~10배)
 CAP_BAND_LOW = 0.1
@@ -44,6 +47,10 @@ def get_financial_health(ticker):
         "debt_to_equity": info.get("debtToEquity"),
         "fcf_positive": fcf_positive,
         "runway_months": runway_months,
+        "operating_margin": info.get("operatingMargins"),
+        "gross_margin": info.get("grossMargins"),
+        "ev_ebitda": info.get("enterpriseToEbitda"),
+        "revenue_growth_yoy": info.get("revenueGrowth"),
     }
 
 
@@ -82,6 +89,38 @@ def quick_ratio_interpretation(quick_ratio):
     if quick_ratio < QUICK_RATIO_GOOD:
         return "주의"
     return "양호"
+
+
+def current_ratio_interpretation(current_ratio):
+    """당좌비율과 달리 재고까지 포함한 유동자산 기준 — 재고 비중이 큰 업종에서 당좌비율과
+    갈리는 정도를 보면 '재고가 안 팔릴 때의 리스크'를 가늠할 수 있다."""
+    if not isinstance(current_ratio, (int, float)):
+        return "데이터 없음"
+    if current_ratio < CURRENT_RATIO_RISK:
+        return "위험 — 단기 채무 대비 유동자산(재고 포함)도 부족"
+    if current_ratio < CURRENT_RATIO_GOOD:
+        return "주의"
+    return "양호"
+
+
+def format_pct(value, decimals=1):
+    """비율(fraction)을 퍼센트 문자열로 변환. None/비수치는 None 반환(호출부에서 N/A 처리).
+    -0.0 같은 부동소수점 잡음은 0.0으로 정규화(실측: IREN의 revenueGrowth가 -0.0으로 나옴 —
+    결측이 아니라 '거의 변화 없음'을 뜻하는 실제 값이라 -0.0% 로 보이는 걸 방지)."""
+    if not isinstance(value, (int, float)):
+        return None
+    pct = round(value * 100, decimals)
+    return f"{0.0 if pct == 0 else pct:.{decimals}f}%"
+
+
+def ev_ebitda_interpretation(ev_ebitda):
+    """EBITDA가 음수(적자)면 배수 자체가 의미를 잃어 숫자만 보면 저평가로 오독할 위험이
+    커서(실측: USAR -19.6배), 배수 대신 명시적으로 '적자' 문구를 반환한다."""
+    if not isinstance(ev_ebitda, (int, float)):
+        return "N/A"
+    if ev_ebitda < 0:
+        return "적자(EBITDA 음수) — 배수 무의미"
+    return f"{ev_ebitda:.1f}배"
 
 
 def auto_detect_keywords(target_summary):
