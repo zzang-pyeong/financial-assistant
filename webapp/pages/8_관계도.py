@@ -11,11 +11,13 @@ from lib.page_helpers import require_analysis, inject_base_styles, render_wordma
 from lib.search import render_sidebar
 from lib.charts import (
     render_relationship_graph_figure, group_relationship_edges,
-    MAX_RELATIONSHIP_NODES, RELATIONSHIP_PLOTLY_CONFIG,
+    RELATIONSHIP_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
 )
 from lib.known_companies import STATIC_KNOWN_COMPANIES
 from lib.sec_filings import find_filing_relationships, attach_context_snippets
 from lib.logos import get_circular_logos
+from lib.sectors import get_sectors
+from lib.translate import to_korean, prefetch_korean
 
 st.set_page_config(page_title="Relationship Map — EnterTicker", layout="wide")
 inject_base_styles()
@@ -88,6 +90,29 @@ def _date_str(epoch):
         return ""
 
 
+# _best_description()이 문맥을 하나도 못 찾았을 때 쓰는 안내문 — 이미 한글이라 번역
+# 대상에서 제외해야 한다(아래 한글 번역 토글 참고).
+_NO_CONTEXT_PLACEHOLDER = "원문 확인 필요 (문맥 추출 안 됨)"
+
+
+def _best_description(g, max_chars=140):
+    """상대기업별 요약 표에서 "관계 유형"(전략적 제휴/공시상 언급 등)만으로는 실제로 뭘
+    하는 관계인지 전혀 알 수 없다는 문제 — 그래프 hover와 근거 원문 표에만 있던 실제
+    문맥(뉴스 요약 또는 공시 발췌)을 요약 표에도 끌어와 한눈에 보이게 한다.
+    문맥(context)이 있는 근거 중 최신 것을 우선 채택하고, 문맥을 하나도 못 얻은 경우
+    (SEC 스니펫 추출 실패 등)엔 "공시상 언급" 헤드라인 자체는 내용이 없으므로 그대로
+    보여주지 않고 원문 확인을 안내한다 — 뉴스 헤드라인은 그 자체로 내용이 있어 그대로 쓴다."""
+    with_context = [h for h in g["headlines"] if h[4]]
+    if with_context:
+        text = max(with_context, key=lambda h: h[0])[4]
+    else:
+        latest = max(g["headlines"], key=lambda h: h[0])
+        text = _NO_CONTEXT_PLACEHOLDER if latest[5] == "공시상 언급" else latest[1]
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "…"
+    return text
+
+
 if not all_edges:
     st.info(
         "관계도를 그릴 수 있는 매칭이 없습니다 — 아는 회사 목록에 있는 회사가 이 종목의 "
@@ -103,40 +128,60 @@ kpi1.metric("상대기업", f"{len(grouped)}개")
 kpi2.metric("뉴스 근거", f"{len(news_edges)}건")
 kpi3.metric("SEC 공시 근거", f"{len(filing_edges_result)}건")
 
-# 로고는 그래프에 실제로 그려지는 노드(상위 N개) + 허브에 대해서만 받는다 — 표에는 안 쓰므로
-# 전체 상대기업만큼 받을 이유가 없다. Finnhub 무료 티어(분당 60회)에서 티커당 최대 11회.
-# 로고가 없는 회사(특히 소형주)가 흔하고, 그 경우 노드는 로고 도입 전과 똑같이 빈 원이 된다.
-graph_tickers = [cp for cp, _ in grouped[:MAX_RELATIONSHIP_NODES]]
+# 그래프에 상대기업을 상위 몇 개로 자르지 않고 전부 그리기로 했으므로(사용자 요청 —
+# "관련 있는 기업들 전부 다 표현"), 로고도 전체 상대기업 + 허브에 대해 받는다. Finnhub
+# 무료 티어(분당 60회) 한도에 걸릴 수 있는데, 실패한 티커는 조용히 빈 원으로 폴백되므로
+# (get_circular_logos 참고) 최악의 경우도 로고 도입 전과 같은 모습일 뿐 깨지지 않는다.
+graph_tickers = [cp for cp, _ in grouped]
 logo_cache_key = (ticker, tuple(graph_tickers))
 if st.session_state.get("relationship_logo_key") != logo_cache_key:
     with st.spinner("회사 로고 불러오는 중..."):
         logos = get_circular_logos([ticker] + graph_tickers)
     st.session_state.update(relationship_logos=logos, relationship_logo_key=logo_cache_key)
 
+# 상대기업이 많을 때만(사용자 요청: "너무 많아지면 섹터별로 묶을 수 있을까") 섹터를
+# 조회한다 — 회사 수가 적으면 한 링에 다 들어가서 묶어도 얻는 게 없고, yfinance 호출도
+# 그만큼 아낀다.
+sectors = {}
+if len(graph_tickers) > SECTOR_CLUSTER_THRESHOLD:
+    sector_cache_key = (ticker, tuple(graph_tickers))
+    if st.session_state.get("relationship_sector_key") != sector_cache_key:
+        with st.spinner("섹터 정보 불러오는 중..."):
+            sectors = get_sectors(graph_tickers)
+        st.session_state.update(relationship_sectors=sectors, relationship_sector_key=sector_cache_key)
+    else:
+        sectors = st.session_state.get("relationship_sectors", {})
+
 st.plotly_chart(
     render_relationship_graph_figure(
-        ticker, hub_name, all_edges, logos=st.session_state.get("relationship_logos", {}),
+        ticker, hub_name, all_edges,
+        logos=st.session_state.get("relationship_logos", {}), sectors=sectors,
     ),
     use_container_width=True, config=RELATIONSHIP_PLOTLY_CONFIG,
 )
-st.caption("노드에 마우스를 올리면 요약이 보입니다. 전체 근거와 원문 링크는 아래 표에 있습니다.")
+caption = "노드에 마우스를 올리면 요약이 보입니다. 전체 근거와 원문 링크는 아래 표에 있습니다."
+if sectors:
+    caption += " 상대기업이 많아 같은 섹터끼리 묶어서 배치했습니다."
+st.caption(caption)
 
-# 그래프에 상위 N개만 그리는 건 원래도 그랬는데 화면에 아무 표시가 없어서, 나머지 회사가
-# 존재하는지조차 알 수 없었다. 잘린 개수를 명시하고 전체는 아래 표에서 보게 한다.
-if len(grouped) > MAX_RELATIONSHIP_NODES:
-    st.caption(
-        f"그래프에는 근거가 많은 순으로 {MAX_RELATIONSHIP_NODES}개만 그렸습니다 — "
-        f"나머지 {len(grouped) - MAX_RELATIONSHIP_NODES}개를 포함한 전체는 아래 표에 있습니다."
-    )
+subheader_col, translate_col = st.columns([3, 1])
+with subheader_col:
+    st.subheader("상대기업별 요약")
+with translate_col:
+    # "무엇을 하는지"는 SEC 공시/뉴스 원문(영어) 그대로라, 옵션 데이터 페이지의 '가격순으로'
+    # 토글과 같은 자리에 번역 스위치를 둔다 — 기본은 원문(끄기), 켜면 한글로 바꿔 보여준다.
+    show_korean = st.toggle("한글로 보기")
 
-st.subheader("상대기업별 요약")
 summary_rows = []
-for rank, (cp_ticker, g) in enumerate(grouped, start=1):
+for cp_ticker, g in grouped:
     latest = max(g["headlines"], key=lambda h: h[0])
-    summary_rows.append({
-        "그래프": "○" if rank <= MAX_RELATIONSHIP_NODES else "",
-        "티커": cp_ticker,
-        "기업명": g["name"] or cp_ticker,
+    row = {"티커": cp_ticker, "기업명": g["name"] or cp_ticker}
+    if sectors:
+        # 회사가 적어서 섹터를 조회조차 안 한 경우엔 이 컬럼 자체를 안 만든다 —
+        # 전부 빈칸인 컬럼을 보여주는 것보다 안 보여주는 쪽이 덜 헷갈린다.
+        row["섹터"] = sectors.get(cp_ticker) or "정보 없음"
+    row.update({
+        "무엇을 하는지": _best_description(g),
         "관계 유형": ", ".join(g["types"]),
         "최신 상태": g["latest_status"] or "",
         "뉴스": g["news_count"],
@@ -144,12 +189,27 @@ for rank, (cp_ticker, g) in enumerate(grouped, start=1):
         "최근 근거일": _date_str(g["latest_dt"]),
         "최근 원문": latest[2] or None,
     })
+    summary_rows.append(row)
+
+if show_korean:
+    # 이미 한글인 안내문(_NO_CONTEXT_PLACEHOLDER)은 번역기에 넣으면 오히려 깨지므로 제외.
+    to_translate = [
+        r["무엇을 하는지"] for r in summary_rows if r["무엇을 하는지"] != _NO_CONTEXT_PLACEHOLDER
+    ]
+    with st.spinner("한글로 번역 중..."):
+        prefetch_korean(to_translate)
+    for r in summary_rows:
+        if r["무엇을 하는지"] != _NO_CONTEXT_PLACEHOLDER:
+            r["무엇을 하는지"] = to_korean(r["무엇을 하는지"])
 
 st.dataframe(
     pd.DataFrame(summary_rows),
     hide_index=True, use_container_width=True,
     column_config={
-        "그래프": st.column_config.TextColumn("그래프", width="small", help="위 그래프에 노드로 표시된 회사"),
+        "무엇을 하는지": st.column_config.TextColumn(
+            "무엇을 하는지", width="large",
+            help="뉴스 요약 또는 SEC 공시 발췌 — 실제 근거 원문은 아래 표에서 확인하세요.",
+        ),
         "뉴스": st.column_config.NumberColumn("뉴스", width="small", help="뉴스 기사에서 잡힌 근거 건수"),
         "공시": st.column_config.NumberColumn("공시", width="small", help="SEC 공시에서 잡힌 근거 건수"),
         "최근 원문": st.column_config.LinkColumn("최근 원문", display_text="열기", width="small"),

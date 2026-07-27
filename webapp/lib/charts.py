@@ -93,7 +93,6 @@ def render_price_chart_figure(df, period_days=None):
     return fig
 
 
-MAX_RELATIONSHIP_NODES = 10
 _RELATIONSHIP_EDGE_COLORS = {
     "인수합병(M&A)": "#e74c3c",
     "공급 계약": "#2f6fed",
@@ -124,6 +123,16 @@ _MAX_PREVIEW_CHARS = 150
 _STAGGER_FROM = 6
 _RADIUS_NEAR = 1.0
 _RADIUS_FAR = 1.24
+
+# 상대기업을 상위 몇 개로 자르지 않고 전부 그리기로 하면서(예전엔 근거 많은 순 10개만
+# 그리고 나머지는 표에서만 봐야 했음), 한 링에 몰아넣으면 회사 수가 많은 종목(수십 개)은
+# 라벨이 전부 겹쳐버린다. 그래서 한 링에 최대 _RING_CAPACITY개까지만 놓고, 그 이상은
+# 반지름을 한 단계 더 키운 다음 링에 이어서 배치한다 — 링마다 독립적으로 12시부터
+# 시계방향 균등 배치 + (6개 넘으면) 반지름 스태거링을 그대로 적용한다.
+_RING_CAPACITY = 10
+# 링 사이 간격. 한 링 안의 스태거링 폭(_RADIUS_FAR - _RADIUS_NEAR = 0.24)과 노드 지름
+# (_NODE_RADIUS * 2 = 0.27)을 더한 값보다 넉넉히 커야 다음 링의 노드가 겹치지 않는다.
+_RING_RADIUS_STEP = 0.62
 
 # 노드 원의 크기 — 픽셀(marker size)이 아니라 **데이터 좌표** 단위다.
 # 로고를 넣으려면 이래야 한다: plotly의 layout image는 데이터 좌표로 배치되는데 marker는
@@ -282,38 +291,107 @@ def group_relationship_edges(edges):
     )
 
 
+def _ring_count(total):
+    """total개 노드를 _RING_CAPACITY개씩 나눠 담을 때 필요한 링 수."""
+    return max(1, math.ceil(total / _RING_CAPACITY))
+
+
+def _position_for_index(i, count):
+    """전체 count개 중 i번째 노드의 (각도, 반지름) — _node_positions와 섹터 라벨 배치
+    (_sector_label_anchor)가 같은 좌표 계산을 공유하도록 분리해뒀다."""
+    ring = i // _RING_CAPACITY
+    idx_in_ring = i % _RING_CAPACITY
+    ring_size = min(_RING_CAPACITY, count - ring * _RING_CAPACITY)
+    angle = math.pi / 2 - 2 * math.pi * idx_in_ring / ring_size
+    radius = _RADIUS_NEAR + ring * _RING_RADIUS_STEP
+    if ring_size >= _STAGGER_FROM and idx_in_ring % 2 == 1:
+        radius += _RADIUS_FAR - _RADIUS_NEAR
+    return angle, radius
+
+
 def _node_positions(count):
     """허브를 중심으로 12시 방향에서 시계방향으로 노드를 배치한 좌표 목록.
 
     12시에서 시계방향인 이유는 단순히 읽는 순서와 맞아서다(기존엔 3시에서 반시계방향이라
-    "가장 근거가 많은 회사"가 오른쪽 옆구리에서 시작했다). 노드가 많아지면 반지름을
-    번갈아 바꿔 라벨이 겹치지 않게 한다."""
+    "가장 근거가 많은 회사"가 오른쪽 옆구리에서 시작했다).
+
+    상대기업이 _RING_CAPACITY(10개)를 넘으면 한 링에 다 몰아넣지 않고 반지름이 더 큰
+    다음 링으로 이어서 배치한다(근거가 많은 순서 그대로 안쪽 링부터 채움) — 상위 몇 개만
+    그리던 예전 방식과 달리 전부 다 그리기로 하면서, 회사 수가 많아도 라벨이 뭉개지지
+    않게 하기 위함. 각 링 내부에서는 그 링에 든 노드 수만큼 균등 분배하고, 6개 넘게
+    들어간 링은 기존처럼 반지름을 번갈아 바꿔 라벨 겹침을 한 번 더 완화한다."""
     positions = []
     for i in range(count):
-        angle = math.pi / 2 - 2 * math.pi * i / count
-        radius = _RADIUS_NEAR
-        if count >= _STAGGER_FROM and i % 2 == 1:
-            radius = _RADIUS_FAR
+        angle, radius = _position_for_index(i, count)
         positions.append((radius * math.cos(angle), radius * math.sin(angle)))
     return positions
 
 
-def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None):
-    """허브(현재 티커) 중심 원형 관계도. 노드 수가 항상 작아(상위 10개) networkx 등 배치
-    라이브러리 없이 단순 원형 배치로 충분하다. 같은 상대 회사에 대한 여러 엣지는 노드
-    1개로 합치고, 유형은 색, 최신 진행상태가 "철회·무산"이면 점선으로 표시한다 — 관계가
-    끝났다는 신호를 색과 별개로 선 스타일이라는 독립된 채널로 전달(오독 방지).
+# 상대기업이 많을 때(사용자 요청: "너무 많아지면 섹터별로 묶을 수 있을까") 이 개수를
+# 넘어야만 섹터 클러스터링을 켠다 — 적을 때는 링 하나에 다 들어가서 묶어도 얻는 게 없다.
+SECTOR_CLUSTER_THRESHOLD = _RING_CAPACITY
+_UNKNOWN_SECTOR_LABEL = "섹터 정보 없음"
+
+
+def cluster_by_sector(ordered, sectors):
+    """group_relationship_edges() 결과(근거 수 내림차순)를 섹터가 같은 회사끼리 인접하게
+    재배열한다. 그룹 자체는 그룹 내 근거 수 합계가 큰 순으로 배치하고, 그룹 안에서는
+    기존 정렬(근거 수 내림차순)을 그대로 유지한다. 섹터를 못 찾은 회사는 "섹터 정보
+    없음"으로 묶어 맨 뒤에 둔다. (재배열된 리스트, [(섹터명, 시작idx, 끝idx), ...]) 반환 —
+    뒤의 idx 구간은 render_relationship_graph_figure가 섹터 라벨을 그릴 때 쓴다."""
+    buckets = {}
+    for cp_ticker, g in ordered:
+        sec = sectors.get(cp_ticker) or _UNKNOWN_SECTOR_LABEL
+        buckets.setdefault(sec, []).append((cp_ticker, g))
+
+    ranked = sorted(
+        buckets.items(),
+        key=lambda kv: (
+            kv[0] != _UNKNOWN_SECTOR_LABEL,
+            sum(len(g["headlines"]) for _, g in kv[1]),
+        ),
+        reverse=True,
+    )
+
+    clustered, boundaries = [], []
+    idx = 0
+    for sector_name, members in ranked:
+        clustered.extend(members)
+        boundaries.append((sector_name, idx, idx + len(members)))
+        idx += len(members)
+    return clustered, boundaries
+
+
+def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, sectors=None):
+    """허브(현재 티커) 중심 원형 관계도. 상대기업을 상위 몇 개로 자르지 않고 전부 그린다 —
+    근거가 많은 순으로 안쪽 링부터 채우고, 한 링(_RING_CAPACITY개)이 차면 반지름을 키운
+    다음 링에 이어서 배치한다(_node_positions 참고). networkx 등 배치 라이브러리 없이도
+    단순 원형/링 배치로 충분하다. 같은 상대 회사에 대한 여러 엣지는 노드 1개로 합치고,
+    유형은 색, 최신 진행상태가 "철회·무산"이면 점선으로 표시한다 — 관계가 끝났다는 신호를
+    색과 별개로 선 스타일이라는 독립된 채널로 전달(오독 방지).
 
     logos: {티커: `lib/logos.py::get_circular_logo()` 결과} — 있으면 노드 원 안에 로고를
     넣는다. 이 함수는 네트워크를 타지 않는다(순수 렌더링 유지). 로고 수집·가공은 호출부
     (pages/8_관계도.py)가 담당하고, 없는 티커는 그냥 빠지면 된다 — 로고 없는 노드는 로고
     기능 추가 전과 똑같이 빈 원으로 그려진다.
 
+    sectors: {티커: 섹터명 또는 None} — 상대기업이 SECTOR_CLUSTER_THRESHOLD개를 넘으면
+    (사용자 요청: "너무 많아지면 섹터별로 묶어서") 같은 섹터끼리 인접하게 재배열하고,
+    각 섹터 군집의 첫(근거 최다) 노드 옆에 섹터명을 라벨로 붙인다. None이거나 상대기업이
+    적으면 기존처럼 근거 수 순서 그대로 배치한다(하위 호환 — 이 인자를 안 넘기던 기존
+    호출부·테스트는 그대로 동작).
+
     ⚠️ 노드 크기는 근거 개수와 무관하게 전부 같다. 크기로 굵기를 주면 "근거가 많다 =
     관계가 더 확실하다"는 뜻으로 읽히는데, 그건 이 제품이 하지 않기로 한 집계다(원칙 B).
     개수는 그래프 아래 근거 표에서 숫자 그대로 확인한다."""
     logos = logos or {}
-    ordered = group_relationship_edges(edges)[:MAX_RELATIONSHIP_NODES]
+    ordered = group_relationship_edges(edges)
+
+    sector_boundaries = []
+    if sectors and len(ordered) > SECTOR_CLUSTER_THRESHOLD:
+        ordered, sector_boundaries = cluster_by_sector(ordered, sectors)
+        if len(sector_boundaries) <= 1:
+            sector_boundaries = []  # 섹터가 하나뿐이면 묶어봐야 라벨만 늘 뿐이라 생략
 
     fig = go.Figure()
     coords = _node_positions(len(ordered))
@@ -415,17 +493,37 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None):
             hovertext=[hub_name], hoverinfo="text", showlegend=False,
         ))
 
-    # 라벨이 노드 바깥에 붙으므로 축 범위를 반지름보다 넉넉히 잡아야 잘리지 않는다.
-    # fixedrange=True로 축 확대/축소를 아예 막는다 — 관계도는 좌표에 의미가 없어서(원형
-    # 배치는 배치일 뿐) 확대해서 볼 것이 없고, 사용자가 스크롤로 아래 표를 보려다 실수로
-    # 그래프를 확대해버리는 일을 막는 게 훨씬 중요하다.
-    span = _RADIUS_FAR + _NODE_RADIUS + 0.42
+    # 라벨이 노드 바깥에 붙으므로 축 범위를 가장 바깥 링의 반지름보다 넉넉히 잡아야
+    # 잘리지 않는다. fixedrange=True로 축 확대/축소를 아예 막는다 — 관계도는 좌표에
+    # 의미가 없어서(원형 배치는 배치일 뿐) 확대해서 볼 것이 없고, 사용자가 스크롤로
+    # 아래 표를 보려다 실수로 그래프를 확대해버리는 일을 막는 게 훨씬 중요하다.
+    num_rings = _ring_count(len(ordered))
+    outer_radius = _RADIUS_NEAR + (num_rings - 1) * _RING_RADIUS_STEP + (_RADIUS_FAR - _RADIUS_NEAR)
+    span = outer_radius + _NODE_RADIUS + 0.42
+
+    # 섹터 군집마다 그 군집의 첫(근거 최다) 노드 바로 바깥에 섹터명을 라벨로 붙인다 —
+    # 클러스터링만으로는 "왜 이렇게 뭉쳐 있는지"가 안 보여서, 이름표를 옆에 놓아 바로 알게 한다.
+    for sector_name, start, _end in sector_boundaries:
+        angle, radius = _position_for_index(start, len(ordered))
+        label_radius = radius + _NODE_RADIUS + 0.28
+        fig.add_annotation(
+            x=label_radius * math.cos(angle), y=label_radius * math.sin(angle),
+            xref="x", yref="y", text=sector_name, showarrow=False,
+            font=dict(size=11, color="#6b7280"),
+            bgcolor="rgba(255,255,255,0.85)", borderpad=2,
+        )
+
     fig.update_xaxes(visible=False, range=[-span, span], fixedrange=True)
     fig.update_yaxes(
         visible=False, range=[-span, span], scaleanchor="x", scaleratio=1, fixedrange=True,
     )
+    # 링이 늘어나 좌표 범위(span)가 넓어지는 만큼 픽셀 높이도 같이 키운다 — 안 그러면
+    # 노드·로고·글자가 화면에서 점점 작아져 상대기업이 많은 종목일수록 오히려 안 보이게 된다.
+    # 단일 링(span 기본값) 기준 520px을 그대로 두고 비율만큼 늘리되, 너무 길어지지 않게 상한.
+    _DEFAULT_SPAN = _RADIUS_FAR + _NODE_RADIUS + 0.42
+    height = min(1400, round(520 * (span / _DEFAULT_SPAN)))
     fig.update_layout(
-        height=520,
+        height=height,
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.01, x=0.5, xanchor="center",

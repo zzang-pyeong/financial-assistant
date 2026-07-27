@@ -7,7 +7,7 @@ sys.path.insert(0, "webapp")
 
 from lib.charts import (
     group_relationship_edges, render_relationship_graph_figure,
-    _node_positions, MAX_RELATIONSHIP_NODES,
+    _node_positions, _RING_CAPACITY,
 )
 
 def edge(cp, name, rtype, status, dt, url, context=None):
@@ -17,7 +17,7 @@ def edge(cp, name, rtype, status, dt, url, context=None):
         "headline": f"{cp} 관련 헤드라인", "url": url, "datetime": dt, "context": context,
     }
 
-# 15개 회사 — 그래프 상한(10)을 넘겨서 잘림 처리를 확인
+# 15개 회사 — 한 링 용량(10)을 넘겨서 다중 링 배치가 되는지 확인
 edges = []
 for i in range(15):
     cp = f"CP{i:02d}"
@@ -47,9 +47,9 @@ assert cp00["news_count"] == 1 and cp00["filing_count"] == 1, \
     f"뉴스/공시 분리 실패: {cp00['news_count']}/{cp00['filing_count']}"
 print(f"3) 소스별 분리 OK: CP00 = 뉴스 {cp00['news_count']}건 / 공시 {cp00['filing_count']}건")
 
-# 4) 노드 배치 — 라벨이 겹칠 만큼 가까운 노드가 없는지
-coords = _node_positions(MAX_RELATIONSHIP_NODES)
-assert len(coords) == 10
+# 4) 노드 배치(단일 링, count <= _RING_CAPACITY) — 라벨이 겹칠 만큼 가까운 노드가 없는지
+coords = _node_positions(_RING_CAPACITY)
+assert len(coords) == _RING_CAPACITY
 first = coords[0]
 assert abs(first[0]) < 1e-9 and first[1] > 0, f"12시 방향에서 시작하지 않음: {first}"
 assert coords[1][0] > 0, "시계방향이 아님"
@@ -63,13 +63,26 @@ flat = [math.dist(a, b) for i, a in enumerate([(math.cos(math.pi/2 - 2*math.pi*i
         for b in [(math.cos(math.pi/2 - 2*math.pi*j/10), math.sin(math.pi/2 - 2*math.pi*j/10)) for j in range(10)] if a != b]
 print(f"   (반지름 고정이었다면 최소거리 {min(flat):.3f} — 엇갈리게 배치해 {min_dist/min(flat):.2f}배 벌어짐)")
 
-# 5) 그래프가 실제로 그려지는지 + 상한 적용
+# 4b) 다중 링 배치 — 15개(용량 10을 넘김)가 안쪽/바깥 링 두 개로 나뉘고, 링끼리 겹치지 않는지
+coords15 = _node_positions(15)
+assert len(coords15) == 15
+inner, outer = coords15[:_RING_CAPACITY], coords15[_RING_CAPACITY:]
+inner_dists = [math.hypot(x, y) for x, y in inner]
+outer_dists = [math.hypot(x, y) for x, y in outer]
+assert max(inner_dists) < min(outer_dists), \
+    f"링이 겹침: 안쪽 최대 반지름 {max(inner_dists):.3f} >= 바깥쪽 최소 반지름 {min(outer_dists):.3f}"
+min_dist_all = min(math.dist(a, b) for i, a in enumerate(coords15) for b in coords15[i + 1:])
+assert min_dist_all > 0.2, f"링 배치에서 노드가 너무 붙음: {min_dist_all:.3f}"
+print(f"4b) 다중 링 배치 OK — 15개 → 안쪽 10개(반지름 ≤{max(inner_dists):.3f}), "
+      f"바깥 5개(반지름 ≥{min(outer_dists):.3f}), 전체 최소거리 {min_dist_all:.3f}")
+
+# 5) 그래프가 실제로 그려지는지 — 이제 상위 N개로 자르지 않고 전부 그린다
 fig = render_relationship_graph_figure("NVDA", "NVIDIA Corporation", edges)
 node_traces = [t for t in fig.data if t.mode == "markers+text" and t.text and len(t.text) > 1]
 assert len(node_traces) == 1
-assert len(node_traces[0].x) == MAX_RELATIONSHIP_NODES, \
-    f"상한 미적용: {len(node_traces[0].x)}개 노드"
-print(f"5) 그래프 렌더 OK: 15개 중 {len(node_traces[0].x)}개 노드만 표시")
+assert len(node_traces[0].x) == len(grouped), \
+    f"전부 그려지지 않음: {len(node_traces[0].x)}개 노드 (상대기업 {len(grouped)}개)"
+print(f"5) 그래프 렌더 OK: 상대기업 {len(grouped)}개 전부 표시(더 이상 상위 N개로 자르지 않음)")
 
 # 노드 크기가 전부 같은지 (근거 수로 크기를 주지 않는다는 원칙 B)
 assert isinstance(node_traces[0].marker.size, (int, float)), "노드 크기가 개수에 따라 달라짐"
@@ -94,19 +107,21 @@ print("\n전부 통과")
 # --- 9) 로고 렌더링 (2026-07-27 추가) ------------------------------------------------
 from lib.charts import _NODE_RADIUS, _HUB_RADIUS, _edge_endpoints
 
-# CP03은 일부러 넣는다 — 근거 1건이라 상위 10개에 못 들어 그래프에 노드가 없다.
-# 그려지지도 않는 노드의 로고까지 배치하면 안 되므로, 이게 걸러지는지 확인하는 게 목적이다.
-drawn = [cp for cp, _ in grouped[:MAX_RELATIONSHIP_NODES]]
-assert "CP00" in drawn and "CP03" not in drawn, f"테스트 전제가 깨짐: {drawn}"
+# 이제 상대기업을 상위 N개로 자르지 않고 전부 그리므로, CP00~CP14 15개 모두에 로고를 줄
+# 수 있다. 그래프에 전혀 없는 티커(ZZZZ)의 로고를 같이 넘겨도 무시되는지가 확인 대상.
+drawn = [cp for cp, _ in grouped]
+assert len(drawn) == 15 and "CP00" in drawn and "CP14" in drawn, f"테스트 전제가 깨짐: {drawn}"
 
-logos = {"CP00": "https://logo/cp00.png", "CP03": "https://logo/cp03.png",
-         "NVDA": "https://logo/nvda.png"}
+logos = {cp: f"https://logo/{cp.lower()}.png" for cp in drawn}
+logos["ZZZZ"] = "https://logo/zzzz.png"
+logos["NVDA"] = "https://logo/nvda.png"
 fig_logo = render_relationship_graph_figure("NVDA", "NVIDIA Corporation", edges, logos=logos)
 
 imgs = fig_logo.layout.images
-assert len(imgs) == 2, f"로고 이미지 수 불일치: {len(imgs)} (허브 NVDA + 노드 CP00 = 2여야 함)"
-print(f"\n9) 로고 {len(imgs)}개 배치 OK — 허브 + 그려진 노드만, "
-      f"그래프에 없는 CP03은 로고를 줘도 무시됨")
+assert len(imgs) == len(drawn) + 1, \
+    f"로고 이미지 수 불일치: {len(imgs)} (허브 + 상대기업 {len(drawn)}개 = {len(drawn) + 1}이어야 함)"
+print(f"\n9) 로고 {len(imgs)}개 배치 OK — 상대기업 전부({len(drawn)}개) + 허브에 로고, "
+      f"그래프에 없는 ZZZZ는 로고를 줘도 무시됨")
 
 # 로고가 원 안에 들어가는지 — 정사각형이 원에 내접하려면 한 변 <= 반지름 x 2/√2
 import math as _m
@@ -120,7 +135,7 @@ print(f"10) 모든 로고가 원 안에 내접·중앙정렬·비율보존 OK")
 
 # 원이 데이터 좌표 shape으로 그려졌는지 (로고와 같은 좌표계여야 창 크기 변화에 같이 움직임)
 circles = [s for s in fig_logo.layout.shapes if s.type == "circle"]
-assert len(circles) >= 10, f"노드 원 shape이 부족: {len(circles)}"
+assert len(circles) == len(drawn) + 1, f"노드 원 shape 개수 불일치: {len(circles)}"
 assert all(s.xref == "x" and s.yref == "y" for s in circles), "원이 데이터 좌표가 아님"
 print(f"11) 노드 원 {len(circles)}개가 데이터 좌표 shape OK (로고와 같은 좌표계)")
 
@@ -130,10 +145,12 @@ assert abs(sx - _HUB_RADIUS) < 1e-9, f"선이 허브 중심에서 시작함: {sx
 assert abs(ex - (1.0 - _NODE_RADIUS)) < 1e-9, f"선이 노드 중심까지 감: {ex}"
 print(f"12) 선이 원 테두리에서 시작/종료 OK (허브 {sx:.3f} → 노드 {ex:.3f}, 중심 관통 안 함)")
 
-# 로고 없이 호출해도 (기존 동작) 깨지지 않는지 — 폴백 경로
+# 로고 없이 호출해도 (기존 동작) 깨지지 않는지 — 폴백 경로. 허브도 로고가 없으면 원
+# shape이 아니라 꽉 채운 마커로 그려지므로(로고 있을 때만 흰 원+로고 조합), 이 경우
+# 원 개수는 상대기업 수만큼(허브 제외)이다.
 fig_none = render_relationship_graph_figure("NVDA", "NVIDIA", edges)
 assert len(fig_none.layout.images) == 0, "로고를 안 넘겼는데 이미지가 생김"
-assert len([s for s in fig_none.layout.shapes if s.type == "circle"]) >= 10
+assert len([s for s in fig_none.layout.shapes if s.type == "circle"]) == len(drawn)
 print("13) 로고 없을 때 폴백(빈 원) OK — 이미지 0개, 원은 그대로")
 
 print("\n로고 관련 전부 통과")
@@ -187,3 +204,49 @@ assert node_trace.hoverinfo == "text", "hover가 꺼져버림 — 이건 남겨�
 print("18) 조작 비활성화 OK — 휠확대·툴바·드래그·축확대 전부 off, hover만 살아있음")
 
 print("\nhover/조작 관련 전부 통과")
+
+# --- 19) 섹터 클러스터링 (2026-07-27 추가, 사용자 요청: "너무 많아지면 섹터별로") -----------
+from lib.charts import cluster_by_sector, SECTOR_CLUSTER_THRESHOLD
+
+# CP00~CP04는 Tech, CP05~CP09는 Finance, 나머지(CP10~CP14)는 섹터 정보 없음으로 구성 —
+# 원래 정렬(근거 수 내림차순)과 섹터 경계가 어긋나게 일부러 뒤섞은 배치다.
+sectors = {}
+for i in range(5):
+    sectors[f"CP{i:02d}"] = "Technology"
+for i in range(5, 10):
+    sectors[f"CP{i:02d}"] = "Finance"
+# CP10~CP14는 sectors에 아예 없음 → "섹터 정보 없음"으로 묶여야 함
+
+clustered, boundaries = cluster_by_sector(grouped, sectors)
+assert len(clustered) == len(grouped), f"군집화 중 회사가 사라짐: {len(clustered)} vs {len(grouped)}"
+assert {cp for cp, _ in clustered} == {cp for cp, _ in grouped}, "군집화 중 회사 구성이 바뀜"
+
+# 같은 섹터는 항상 인접해야 한다 — 섹터 이름 시퀀스에서 같은 값이 연속으로만 나오는지 확인
+seq = [sectors.get(cp) or "섹터 정보 없음" for cp, _ in clustered]
+runs = [seq[0]]
+for s in seq[1:]:
+    if s != runs[-1]:
+        runs.append(s)
+assert len(runs) == len({r for r in runs}), f"같은 섹터가 떨어져서 배치됨: {runs}"
+print(f"19) 섹터 클러스터링 OK — {len(boundaries)}개 그룹으로 인접 재배열: "
+      f"{[(name, end - start) for name, start, end in boundaries]}")
+
+# 섹터 정보 없음 그룹은 항상 맨 뒤
+assert boundaries[-1][0] == "섹터 정보 없음", f"'섹터 정보 없음'이 맨 뒤가 아님: {boundaries[-1]}"
+print("20) '섹터 정보 없음' 그룹이 항상 맨 뒤에 배치됨 OK")
+
+# render_relationship_graph_figure에 sectors를 넘기면(그리고 회사 수가 임계값을 넘으면)
+# 실제로 섹터 라벨 annotation이 그려지는지 확인
+assert len(grouped) > SECTOR_CLUSTER_THRESHOLD, "테스트 전제 깨짐: 회사 수가 클러스터링 임계값 이하"
+fig_sector = render_relationship_graph_figure("NVDA", "NVIDIA Corporation", edges, sectors=sectors)
+sector_annotations = [a for a in fig_sector.layout.annotations if a.text in runs]
+assert len(sector_annotations) == len(boundaries), \
+    f"섹터 라벨 개수 불일치: {len(sector_annotations)} vs {len(boundaries)}"
+print(f"21) 섹터 라벨 {len(sector_annotations)}개 그래프에 표시 OK")
+
+# sectors를 안 넘기면(기존 호출부·테스트) 클러스터링/라벨이 전혀 개입하지 않는지 — 하위 호환
+fig_no_sector = render_relationship_graph_figure("NVDA", "NVIDIA Corporation", edges)
+assert len(fig_no_sector.layout.annotations) == 0, "sectors 없이도 섹터 라벨이 그려짐"
+print("22) sectors 미전달 시 기존 동작 그대로(하위 호환) OK")
+
+print("\n섹터 클러스터링 전부 통과")

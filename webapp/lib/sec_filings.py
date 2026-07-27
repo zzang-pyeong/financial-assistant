@@ -278,9 +278,10 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
 
-# 그래프에 표시되는 노드 수와 맞춘다(lib/charts.py::MAX_RELATIONSHIP_NODES = 10).
-# 이전엔 "여유 있게" 20개를 받았는데, 표시도 안 되는 10개분 문서를 더 받는 낭비였다.
-# 그래프 아래 근거 표는 스니펫 없이 링크·헤드라인만 쓰므로 추가 다운로드가 필요 없다.
+# 그래프는 이제 상대기업을 전부 다 그리지만(lib/charts.py), 회사마다 공시 원문을 받아
+# 스니펫을 뽑는 건 시간이 걸려서(스트리밍이라 빨라도 요청 자체는 남음) 전체에 다 걸면
+# 페이지가 느려진다. 근거가 가장 많은 상위 N개에만 실제 문맥을 채우고, 나머지는 요약
+# 표에서 "원문 확인 필요" 안내로 자연스럽게 폴백된다(pages/8_관계도.py::_best_description).
 _MAX_SNIPPET_COMPANIES = 10
 
 # 스트리밍 중 이 크기를 넘게 읽었는데도 회사명을 못 찾으면 포기한다(비정상적으로 큰

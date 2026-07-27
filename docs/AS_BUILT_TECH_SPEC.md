@@ -204,9 +204,11 @@ submission 파일이다) 실제로 쓰는 건 수백 자뿐이기 때문이다. 
 
 캐시는 결과 스니펫(수백 바이트)만 상한 있는 모듈 수준 dict에 담는다 — 예전엔 정제된 문서
 텍스트 전체(수 MB)를 `@st.cache_data`에 넣었고, 그 캐시 함수를 워커 스레드에서 호출해
-ScriptRunContext 경고까지 나던 자리다. 문맥을 뽑는 대상은 그래프에 실제로 표시되는
-회사 수(`MAX_RELATIONSHIP_NODES` = 10)와 맞춘다(예전엔 "여유 있게" 20개를 받아 표시도
-안 되는 절반을 버렸다).
+ScriptRunContext 경고까지 나던 자리다. 그래프는 이제 상대기업을 상위 N개로 자르지 않고
+전부 그리지만(`lib/charts.py::_node_positions` — 링 단위 배치, 한 링에 다 안 들어가면
+다음 링으로), 회사마다 공시 원문을 받아 문맥을 뽑는 건 시간이 걸려서 근거가 가장 많은
+상위 `_MAX_SNIPPET_COMPANIES`(=10)개에만 실제 문맥을 채우고, 나머지는 요약 표에서
+"원문 확인 필요" 안내로 자연스럽게 폴백된다.
 
 **노드 로고** (`lib/data.py::get_company_logo_url`, `lib/logos.py`): Finnhub
 `company-profile2`의 `logo` 필드로 노드 원 안에 회사 로고를 넣는다(이미 쓰던 무료 티어 키
