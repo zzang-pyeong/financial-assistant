@@ -61,8 +61,11 @@ if not rows:
     st.stop()
 
 summary_df = pd.DataFrame(rows)
-summary_df["풋/콜 OI 비율"] = (
-    summary_df["풋 OI 합계"] / summary_df["콜 OI 합계"].replace(0, pd.NA)
+# 콜 OI 합계가 0인 만기가 있으면 replace(0, pd.NA) 이후 나눗셈 결과가 object dtype이 되어
+# .round(2)가 TypeError를 던짐(실측: RDW에서 재현) — to_numeric으로 float dtype을 보장.
+summary_df["풋/콜 OI 비율"] = pd.to_numeric(
+    summary_df["풋 OI 합계"] / summary_df["콜 OI 합계"].replace(0, pd.NA),
+    errors="coerce",
 ).round(2)
 st.dataframe(summary_df, use_container_width=True, hide_index=True)
 

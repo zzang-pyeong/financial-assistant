@@ -123,6 +123,63 @@ def ev_ebitda_interpretation(ev_ebitda):
     return f"{ev_ebitda:.1f}배"
 
 
+def financial_characteristics_comment(health):
+    """재무 건전성 expander에 이미 개별로 나열되는 지표들을 성장성→수익성→유동성 순서로
+    문장으로 재구성한 요약. 순서를 고정하는 이유: 어느 카테고리를 먼저 말하느냐 자체가
+    은근한 강조가 될 수 있어서, 항상 같은 순서로만 서술.
+    **새로운 판단(저평가/위험/매력적 등)을 만들지 않는다** — 여기서 쓰는 임계값
+    (RUNWAY_RISK_MONTHS 등)은 이미 이 파일의 다른 interpretation 함수들이 화면에
+    표시 중인 것과 동일한 값을 재사용할 뿐, 이 함수만의 새 판정 기준이 아니다."""
+    sentences = []
+
+    rg = health.get("revenue_growth_yoy")
+    if isinstance(rg, (int, float)):
+        verb = "성장했습니다" if rg >= 0 else "감소했습니다"
+        sentences.append(f"매출은 전년 대비 {abs(rg)*100:.1f}% {verb}.")
+
+    om = health.get("operating_margin")
+    if isinstance(om, (int, float)):
+        state = "적자" if om < 0 else "흑자"
+        sentences.append(f"영업이익률은 {om*100:.1f}%로 {state} 구간입니다.")
+
+    ev_ebitda = health.get("ev_ebitda")
+    if isinstance(ev_ebitda, (int, float)) and ev_ebitda < 0:
+        sentences.append("EBITDA 자체가 적자라 EV/EBITDA 배수는 의미가 없습니다.")
+
+    roe = health.get("roe")
+    if isinstance(roe, (int, float)) and roe < 0:
+        sentences.append(f"ROE는 {roe*100:.1f}%로 자기자본 대비 손실을 내고 있습니다.")
+
+    liquidity_bits = []
+    cr = health.get("current_ratio")
+    if isinstance(cr, (int, float)):
+        if cr < CURRENT_RATIO_RISK:
+            label = "부족한"
+        elif cr < CURRENT_RATIO_GOOD:
+            label = "보통 수준의"
+        else:
+            label = "여유 있는"
+        liquidity_bits.append(f"유동비율 {cr:.2f}(단기 채무 대비 {label} 유동자산)")
+
+    if health.get("fcf_positive"):
+        liquidity_bits.append("현금흐름은 이미 흑자 전환")
+    else:
+        rm = health.get("runway_months")
+        if isinstance(rm, (int, float)):
+            if rm < RUNWAY_RISK_MONTHS:
+                label = "위험 수준"
+            elif rm < RUNWAY_CAUTION_MONTHS:
+                label = "주의 수준"
+            else:
+                label = "여유 있는 수준"
+            liquidity_bits.append(f"현금 런웨이 {rm:.1f}개월({label})")
+
+    if liquidity_bits:
+        sentences.append("유동성은 " + ", ".join(liquidity_bits) + "입니다.")
+
+    return " ".join(sentences) if sentences else None
+
+
 def auto_detect_keywords(target_summary):
     """대상 종목 설명에 어떤 기본 사전이 매칭되는지 자동 판별"""
     for name, kws in DEFAULT_KEYWORD_DICTS.items():

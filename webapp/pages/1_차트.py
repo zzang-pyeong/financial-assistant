@@ -37,9 +37,13 @@ def _clear_daily_choice():
 
 with list_col:
     st.markdown("**일봉**")
+    daily_keys = list(PERIOD_OPTIONS.keys())
     daily_choice = st.radio(
-        "일봉 기간", list(PERIOD_OPTIONS.keys()), index=None, key="chart_daily_choice", label_visibility="collapsed",
-        on_change=_clear_intraday_choice,
+        # 화면에 실제로 그려지는 기본값(6개월, chart_col의 `daily_choice or "6개월"` 폴백과
+        # 일치)을 라디오에도 미리 체크해둔다 — 이전엔 index=None이라 차트는 6개월치가
+        # 떠 있는데 라디오는 아무것도 선택 안 된 것처럼 보이는 불일치가 있었음.
+        "일봉 기간", daily_keys, index=daily_keys.index("6개월"), key="chart_daily_choice",
+        label_visibility="collapsed", on_change=_clear_intraday_choice,
     )
     st.markdown("**분봉**")
     st.caption("Yahoo 제약상 분봉은 최근 며칠~몇 개월치만 조회됩니다.")

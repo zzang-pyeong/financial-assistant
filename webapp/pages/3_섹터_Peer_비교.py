@@ -9,6 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from lib.peers import (
     tier1_stats, runway_interpretation, quick_ratio_interpretation, roe_interpretation,
     current_ratio_interpretation, format_pct, ev_ebitda_interpretation,
+    financial_characteristics_comment,
 )
 from lib.glossary import render_glossary
 from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
@@ -55,6 +56,13 @@ st.caption("⚠️ PER은 적자 섹터에서 무력화됨(실증 확인) — EV
 
 target_health = st.session_state.target_health
 with st.expander(f"{ticker} 재무 건전성 (Peer 비교 보완)", expanded=True):
+    comment = financial_characteristics_comment(target_health)
+    if comment:
+        st.info(f"🧾 {comment}")
+        st.caption(
+            "위 문장은 아래 개별 지표를 성장성→수익성→유동성 순으로 그대로 재구성한 것 — "
+            "저평가/위험 등 새로운 판단을 추가하지 않습니다."
+        )
     ev_str = f"{target_health['ev_revenue']:.1f}" if isinstance(target_health['ev_revenue'], (int, float)) else "N/A"
     qr = target_health['quick_ratio']
     st.write(f"EV/Revenue: **{ev_str}**  ·  당좌비율: **{qr:.2f}**" if isinstance(qr, (int, float)) else f"EV/Revenue: **{ev_str}**")
