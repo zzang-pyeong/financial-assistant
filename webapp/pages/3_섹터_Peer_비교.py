@@ -49,8 +49,13 @@ if stats:
     st.write(f"Tier1(진짜 동종) {label}: **{stats['mean']:.1f}** (중앙값 {stats['median']:.1f}, n={stats['n']})")
     if isinstance(fwd_pe, (int, float)) and fwd_pe > 0:
         st.write(f"→ 대상 종목은 Tier1 평균의 **{fwd_pe/stats['mean']:.1f}배**")
+elif peer_data["peers"]:
+    st.caption(
+        f"Tier1 유효 forward PE 표본 없음 — Peer 후보 {len(peer_data['peers'])}개 모두 "
+        "동일 산업·동일 섹터+시총 기준을 충족하지 못해 Tier2로 분류됨(아래 전체 목록 참고)"
+    )
 else:
-    st.caption("Tier1 유효 forward PE 표본 없음")
+    st.caption("Tier1 유효 forward PE 표본 없음 — Peer 후보 자체가 조회되지 않음")
 st.caption('')
 
 target_health = st.session_state.target_health
@@ -81,6 +86,12 @@ with st.expander(f"{ticker} 재무 건전성 (Peer 비교 보완)", expanded=Tru
     rg_str = format_pct(target_health['revenue_growth_yoy']) or "N/A"
     st.write(f"매출성장률(YoY): **{rg_str}**")
 
+def _money(v):
+    if not isinstance(v, (int, float)):
+        return "N/A"
+    return f"${v/1e9:,.2f}B"
+
+
 with st.expander("📋 전체 Peer 목록 (Tier1+Tier2)"):
     rows = []
     for p in sorted(peer_data["peers"], key=lambda x: x["tier"]):
@@ -91,6 +102,7 @@ with st.expander("📋 전체 Peer 목록 (Tier1+Tier2)"):
             "근거": _BASIS_KO.get(p.get("tier_basis", ""), "—"),
             "티커": p["ticker"],
             "기업명": p["name"],
+            "시가총액": _money(p.get("marketCap")),
             "Forward PE": round(p["forwardPE"], 1) if isinstance(p["forwardPE"], (int, float)) else None,
             "EV/Revenue": round(h["ev_revenue"], 1) if isinstance(h["ev_revenue"], (int, float)) else None,
             "EV/EBITDA": ev_ebitda_interpretation(h["ev_ebitda"]),

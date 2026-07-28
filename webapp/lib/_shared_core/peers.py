@@ -1,5 +1,45 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
+import yfinance as yf
+
 from .data import get_finnhub_peers, get_business_summary, get_yf_info
+
+# get_yf_info()는 @st.cache_data가 걸려있어 워커 스레드에서 호출하면 ScriptRunContext
+# 경고가 난다(lib/page8_only_relationship/sectors.py·logos.py와 같은 이유). peer는 서로
+# 다른 티커라 캐시 히트를 기대할 수 없어 어차피 매번 네트워크 호출이 필요하므로, 여기서는
+# 그 파일들과 같은 패턴(평범한 dict 캐시 + ThreadPoolExecutor)으로 병렬 조회한다.
+_PEER_INFO_CACHE = {}
+_PEER_INFO_CACHE_MAX = 500
+
+
+def _fetch_info(ticker):
+    try:
+        return yf.Ticker(ticker).info
+    except Exception:
+        return {}
+
+
+def _get_info_cached(ticker):
+    key = ticker.upper()
+    if key in _PEER_INFO_CACHE:
+        return _PEER_INFO_CACHE[key]
+    result = _fetch_info(ticker)
+    if len(_PEER_INFO_CACHE) >= _PEER_INFO_CACHE_MAX:
+        for k in list(_PEER_INFO_CACHE)[: _PEER_INFO_CACHE_MAX // 5]:
+            _PEER_INFO_CACHE.pop(k, None)
+    _PEER_INFO_CACHE[key] = result
+    return result
+
+
+def _get_infos_parallel(tickers, max_workers=6):
+    unique = [t for t in dict.fromkeys(tickers) if t]
+    if not unique:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(unique))) as executor:
+        results = list(executor.map(_get_info_cached, unique))
+    return dict(zip(unique, results))
+
 
 # 부록 9.3 — 재무 건전성 판정 기준
 RUNWAY_RISK_MONTHS = 6
@@ -29,7 +69,10 @@ DEFAULT_KEYWORD_DICTS = {
 def get_financial_health(ticker):
     """부록 9번 — PER이 무력화되는 적자 섹터에서 쓸 보완 지표.
     현금 런웨이 = 보유현금 ÷ |연간 FCF 소진액| × 12개월. FCF>=0이면 '흑자 전환'."""
-    info = get_yf_info(ticker)
+    return _financial_health_from_info(get_yf_info(ticker))
+
+
+def _financial_health_from_info(info):
     cash = info.get("totalCash")
     fcf = info.get("freeCashflow")
 
@@ -230,10 +273,12 @@ def classify_peers(ticker, extra_keywords=None):
 
     target_matches = [kw for kw in keywords if kw in target_summary]
 
+    peer_infos = _get_infos_parallel(peers)
+
     results = []
     for p in peers:
-        summary = get_business_summary(p)
-        info = get_yf_info(p)
+        info = peer_infos.get(p, {})
+        summary = (info.get("longBusinessSummary") or "").lower()
         matches = [kw for kw in target_matches if kw in summary]
 
         p_sector = _norm(info.get("sectorKey") or info.get("sector"))
@@ -251,7 +296,8 @@ def classify_peers(ticker, extra_keywords=None):
                 "tier_basis": tier_basis,  # 신규(추가만) — 기존 소비자에 무해
                 "matches": matches,
                 "forwardPE": info.get("forwardPE"),
-                "health": get_financial_health(p),
+                "marketCap": p_cap,
+                "health": _financial_health_from_info(info),
             }
         )
     return {
