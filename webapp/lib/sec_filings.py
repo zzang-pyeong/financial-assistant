@@ -14,11 +14,14 @@
 (근거 등급 D, 기본 화면에서는 숨김)까지만 표시하고, 실제 문맥은 사용자가 링크를 눌러
 원문에서 직접 확인해야 한다(과확신 방지).
 
-2026-07-27 추가: Exhibit 21(자회사 목록)과 Schedule 13D/13G(대량 지분 보유)는 반대로
-근거 등급 A — 구조화된 SEC 공식 문서에서 관계를 직접 명시하기 때문(추측이 아니라 문서에
-적힌 그대로). 이 둘은 일반 언급 검색과 달리 소량(회사당 최대 30개 자회사, 최근 2년
-13D/13G)만 조회하고 실패 시 조용히 빈 리스트를 반환한다(find_subsidiaries,
-find_beneficial_owners 참고).
+2026-07-27 추가: Schedule 13D/13G(대량 지분 보유)는 반대로 근거 등급 A — 구조화된 SEC
+공식 문서에서 관계를 직접 명시하기 때문(추측이 아니라 문서에 적힌 그대로). 일반 언급
+검색과 달리 최근 2년치만 조회하고 실패 시 조용히 빈 리스트를 반환한다
+(find_beneficial_owners 참고).
+
+2026-07-28: Exhibit 21 자회사 추출은 추가했다가 제거했다 — 대부분 지주회사·파이낸스
+SPV라 투자 판단에 거의 안 쓰이는데(사용자 피드백), 회사당 최대 30개까지 그래프를
+법인 구조로 도배해 실제로 의미 있는 관계(공급·고객, 지분 보유)를 압도해버렸다.
 """
 
 import codecs
@@ -303,44 +306,12 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
 
 
 # ---------------------------------------------------------------------------
-# Exhibit 21 자회사 목록 — 구조화된 SEC 공식 문서라 근거 등급 A. 최근 10-K의 EX-21
-# 첨부문서를 찾아 표를 파싱한다. 형식이 필사마다 다른데(표 vs 텍스트 나열) 표 형식만
-# 지원한다 — 못 찾거나 파싱에 실패하면 조용히 빈 리스트를 반환해서, 이 기능이 실패해도
-# 관계도 나머지가 깨지지 않게 한다(지시서 원칙: 부분 실패를 조용히 처리).
+# 공시 첨부문서 목록 조회 — Schedule 13D/13G(아래)의 실제 문서를 찾는 데 쓰는 공용
+# 유틸리티. (자회사 Exhibit 21 추출 기능은 사용자 판단상 투자 관점에서 가치가 낮고
+# 그래프를 법인 구조로 도배해 제거함 — 이 함수와 아래 정규식들은 13D/13G에도 쓰여서 남음.)
 # ---------------------------------------------------------------------------
-_MAX_SUBSIDIARIES = 30
 _TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
 _CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
-_SUBSIDIARY_HEADER_RE = re.compile(
-    r"^name$|name of (the )?subsidiar|jurisdiction|state of incorporation|"
-    r"where incorporated|incorporated in|organized under",
-    re.IGNORECASE,
-)
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def _get_recent_10k_accession(cik):
-    """CIK의 가장 최근 10-K (accession number, 제출일) — SEC submissions API는 회사당
-    최근 제출 이력을 통째로 주므로(무료·키 불필요) 이걸로 최신 연차보고서를 찾는다."""
-    if not cik:
-        return None, None
-    try:
-        r = requests.get(
-            f"https://data.sec.gov/submissions/CIK{cik}.json",
-            headers={"User-Agent": _USER_AGENT}, timeout=10,
-        )
-        recent = r.json().get("filings", {}).get("recent", {})
-        for form, accession, fdate in zip(
-            recent.get("form", []), recent.get("accessionNumber", []),
-            recent.get("filingDate", []),
-        ):
-            if form == "10-K":
-                return accession, fdate
-    except Exception:
-        pass
-    return None, None
-
-
 _INDEX_HREF_RE = re.compile(r'href="([^"]+)"', re.IGNORECASE)
 
 
@@ -376,85 +347,6 @@ def _list_filing_documents(cik, accession):
         if name:
             docs.append({"name": name, "type": doc_type})
     return docs
-
-
-def _parse_subsidiary_rows(html_text):
-    """Exhibit 21 HTML에서 표 행을 파싱해 [(이름, 관할), ...]로 반환. 표가 아니면(텍스트
-    나열형 등) 빈 리스트 — 이번 범위에서는 표 형식만 지원한다."""
-    rows = []
-    for tr in _TR_RE.finditer(html_text):
-        cells = [_clean_fragment(c).strip() for c in _CELL_RE.findall(tr.group(1))]
-        cells = [c for c in cells if c]
-        if not cells:
-            continue
-        # 제목행("Subsidiaries of Registrant...")과 실제 헤더행("Name of Subsidiary" |
-        # "State... of Incorporation")이 셀만 다를 뿐 같은 <tr>에 같이 들어있는 경우가
-        # 있어(실측: NVDA), 첫 셀만 보면 못 거른다 — 행의 모든 셀을 검사한다.
-        if any(_SUBSIDIARY_HEADER_RE.search(c) for c in cells):
-            continue
-        name = cells[0]
-        jurisdiction = cells[1] if len(cells) > 1 else ""
-        if len(name) >= 2 and not name.replace(".", "").isdigit():
-            rows.append((name, jurisdiction))
-    return rows
-
-
-def find_subsidiaries(ticker):
-    """최근 10-K의 Exhibit 21(자회사 목록)에서 자회사명·관할을 추출해 표준 스키마 엣지로
-    반환한다. (엣지 목록, 잘렸는지 여부) 튜플. 상장 티커를 찾을 수 있으면 매핑하고, 못
-    찾으면 counterparty_ticker=""(회사명만 표시, 추측해 채우지 않음). 30개를 넘으면
-    앞에서부터 30개만 반환하고 잘렸다고 표시한다. 어느 단계든 실패하면 ([], False)."""
-    cik = get_cik(ticker)
-    accession, filing_date = _get_recent_10k_accession(cik)
-    if not accession:
-        return [], False
-
-    docs = _list_filing_documents(cik, accession)
-    exhibit = next((d for d in docs if d["type"].upper().startswith("EX-21")), None)
-    if not exhibit:
-        exhibit = next(
-            (d for d in docs if re.search(r"ex[\-_]?21", d["name"], re.IGNORECASE)), None,
-        )
-    if not exhibit or not exhibit.get("name"):
-        return [], False
-
-    cik_no_padding = str(int(cik))
-    accession_no_dashes = accession.replace("-", "")
-    url = (
-        f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/"
-        f"{accession_no_dashes}/{exhibit['name']}"
-    )
-    try:
-        r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=15)
-        rows = _parse_subsidiary_rows(r.text)
-    except Exception:
-        return [], False
-
-    truncated = len(rows) > _MAX_SUBSIDIARIES
-    rows = rows[:_MAX_SUBSIDIARIES]
-    filing_dt = _file_date_to_epoch(filing_date) if filing_date else None
-
-    edges = []
-    for name, jurisdiction in rows:
-        detail = f" ({jurisdiction} 법인)" if jurisdiction else ""
-        edges.append({
-            "counterparty_ticker": _match_known_ticker(name),
-            "counterparty_name": name,
-            "relationship_type": "자회사",
-            "direction": "outbound",
-            "status": "진행",
-            "evidence_grade": "A",
-            "evidence_level": "공식 SEC Exhibit 21 (자회사 목록)",
-            "source_kind": "SEC 공시",
-            "headline": f"Exhibit 21 자회사 목록에 등재{detail}",
-            "context": None,
-            "url": url,
-            "datetime": filing_dt,
-            "ownership_pct": None,
-            "transaction_value": None,
-            "extraction_method": "rule",
-        })
-    return edges, truncated
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from lib.charts import (
 from lib.known_companies import STATIC_KNOWN_COMPANIES
 from lib.sec_filings import (
     find_filing_relationships, attach_context_snippets, promote_mentions_with_context,
-    find_subsidiaries, find_beneficial_owners,
+    find_beneficial_owners,
 )
 from lib.logos import get_circular_logos
 from lib.sectors import get_sectors
@@ -39,13 +39,12 @@ st.divider()
 # 목적 문장 + 경고 문장은 항상 보이게(작업 지시서 5절) — 나머지 상세 주의사항은
 # 펼쳐야 보이는 expander로 분리해 화면을 덜 뒤덮게 한다.
 st.markdown(
-    "**검색한 기업의 M&A, 지분 보유, 자회사, 계약·제휴 연결을 원문 근거와 함께 탐색합니다.**"
+    "**검색한 기업의 M&A, 지분 보유, 계약·제휴 연결을 원문 근거와 함께 탐색합니다.**"
 )
 st.caption("⚠️ 공시 내 언급은 실제 거래 관계가 아닐 수 있으며 기본 화면에서는 숨깁니다.")
 with st.expander("이 화면을 읽을 때 알아둘 점"):
     st.markdown(
-        "- **자회사·지분 보유는 공식 SEC 문서(Exhibit 21, Schedule 13D/13G)를 우선 근거로 "
-        "합니다.**\n"
+        "- **지분 보유는 공식 SEC 문서(Schedule 13D/13G)를 우선 근거로 합니다.**\n"
         "- **뉴스 기반 관계(M&A·계약·제휴)는 공식 확인 전 보도일 수 있습니다.**\n"
         "- **공시 내 언급은 문맥이 다양합니다.** 경쟁사 비교, 소송 상대, 위험요인 섹션의 "
         "나열 등 실제 거래관계가 아닐 수 있습니다 — 기본 화면에서는 숨기고, 아래 토글로 "
@@ -74,7 +73,7 @@ def _known_companies():
     }.values())
 
 
-# --- 데이터 수집: 뉴스(이미 세션에 있음) + SEC 4종(공시 내 언급/자회사/지분 보유는 여기서
+# --- 데이터 수집: 뉴스(이미 세션에 있음) + SEC 3종(공시 내 언급/지분 보유는 여기서
 # 티커별로 캐시) — 하나가 실패해도 나머지는 그대로 표시되도록 각각 독립적으로 캐시한다.
 if st.session_state.get("filing_edges_ticker") != ticker:
     known = _known_companies()
@@ -93,14 +92,6 @@ if st.session_state.get("filing_edges_ticker") != ticker:
     progress.empty()
     st.session_state.update(filing_edges=filing_edges, filing_edges_ticker=ticker)
 
-if st.session_state.get("subsidiary_edges_ticker") != ticker:
-    with st.spinner("Exhibit 21 자회사 목록 확인 중..."):
-        subsidiary_edges, subsidiary_truncated = find_subsidiaries(ticker)
-    st.session_state.update(
-        subsidiary_edges=subsidiary_edges, subsidiary_truncated=subsidiary_truncated,
-        subsidiary_edges_ticker=ticker,
-    )
-
 if st.session_state.get("ownership_edges_ticker") != ticker:
     with st.spinner("Schedule 13D/13G 대량 지분 보유 확인 중..."):
         ownership_edges = find_beneficial_owners(ticker)
@@ -108,15 +99,13 @@ if st.session_state.get("ownership_edges_ticker") != ticker:
 
 news_edges = st.session_state.get("relationship_edges", [])
 filing_edges_result = st.session_state.get("filing_edges", [])
-subsidiary_edges = st.session_state.get("subsidiary_edges", [])
-subsidiary_truncated = st.session_state.get("subsidiary_truncated", False)
 ownership_edges = st.session_state.get("ownership_edges", [])
-all_edges = news_edges + filing_edges_result + subsidiary_edges + ownership_edges
+all_edges = news_edges + filing_edges_result + ownership_edges
 
 if not all_edges:
     st.info(
         "관계도를 그릴 수 있는 근거가 없습니다 — 아는 회사 목록에 있는 회사가 이 종목의 "
-        "뉴스·공시에 언급되지 않았고, 자회사·대량 지분 보유 공시도 찾지 못했습니다. "
+        "뉴스·공시에 언급되지 않았고, 대량 지분 보유 공시도 찾지 못했습니다. "
         "(관계가 없다는 뜻이 아니라, 이 방식으로는 확인되지 않았다는 뜻입니다.)"
     )
     st.stop()
@@ -143,8 +132,8 @@ def _best_description(g, max_chars=200):
     없어서, 그래프 hover와 근거 원문 표에만 있던 실제 문맥(뉴스 요약 또는 공시 발췌)을
     요약 표의 "핵심 발췌" 컬럼에도 끌어와 한눈에 보이게 한다. 문맥(context)이 있는 근거
     중 최신 것을 우선 채택하고, 문맥을 하나도 못 얻은 공시 내 언급은 헤드라인 자체가
-    내용이 없으므로 원문 확인을 안내한다 — 뉴스/자회사/지분 보유 헤드라인은 그 자체로
-    내용이 있어 그대로 쓴다.
+    내용이 없으므로 원문 확인을 안내한다 — 뉴스/지분 보유 헤드라인은 그 자체로 내용이
+    있어 그대로 쓴다.
 
     lib/sec_filings.py가 문장 경계에서 다듬어 넘겨주므로(최대 320자), 여기서 다시 글자
     수로 뚝 자르면 "단어 중간에서 끊긴다"는 문제가 되풀이된다 — 자를 일이 있어도 단어
@@ -166,7 +155,7 @@ def _best_description(g, max_chars=200):
 # 통제하므로 별도 등급 선택 UI는 없어도 같은 걸 할 수 있다. 등급 자체는 내부적으로는
 # 계속 쓴다(lib/charts.py::group_relationship_edges가 방향·지분율 대표값을 고를 때
 # 근거 등급이 높은 엣지를 우선하는 데 사용).
-_CORE_TYPES = ["자회사", "지분 투자·보유", "M&A", "공급·고객 계약", "전략적 제휴", "합작투자", "라이선싱"]
+_CORE_TYPES = ["지분 투자·보유", "M&A", "공급·고객 계약", "전략적 제휴", "합작투자", "라이선싱"]
 _DEAL_TYPES = {"M&A", "공급·고객 계약", "전략적 제휴", "합작투자", "라이선싱"}
 _PERIOD_DAYS = {"최근 12개월": 365, "최근 24개월": 730, "전체": None}
 
@@ -192,8 +181,7 @@ def _edge_visible(e):
         return include_mentions
     if rel_type not in selected_types:
         return False
-    # 자회사는 기간 필터의 영향을 받지 않는다(작업 지시서 5절 — 공시 기준일만 표기).
-    if cutoff_epoch and rel_type != "자회사":
+    if cutoff_epoch:
         dt = e.get("datetime")
         if dt and dt < cutoff_epoch:
             return False
@@ -217,20 +205,16 @@ def _cp_key(e):
 
 
 kpi_core_cps = {_cp_key(e) for e in core_edges_all}
-kpi_subsidiary_cps = {_cp_key(e) for e in core_edges_all if e["relationship_type"] == "자회사"}
 kpi_ownership_count = sum(1 for e in core_edges_all if e["relationship_type"] == "지분 투자·보유")
 kpi_deal_count = sum(1 for e in core_edges_all if e["relationship_type"] in _DEAL_TYPES)
 
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1, kpi2, kpi3 = st.columns(3)
 kpi1.metric("핵심 관계 상대기업", f"{len(kpi_core_cps)}개")
-kpi2.metric("자회사", f"{len(kpi_subsidiary_cps)}개")
-kpi3.metric("지분 보유", f"{kpi_ownership_count}건")
-kpi4.metric("M&A·계약·제휴", f"{kpi_deal_count}건")
-if subsidiary_truncated:
-    st.caption("자회사 최대 30개까지만 표시합니다 — 전체 목록은 원문 Exhibit 21에서 확인하세요.")
+kpi2.metric("지분 보유", f"{kpi_ownership_count}건")
+kpi3.metric("M&A·계약·제휴", f"{kpi_deal_count}건")
 
 def _looks_like_ticker(s):
-    """자회사·13D/13G 보고자는 실제 티커가 없으면 그룹 키가 회사명 전체로 대체된다
+    """13D/13G 보고자는 실제 티커가 없으면 그룹 키가 회사명 전체로 대체된다
     (lib/charts.py::group_relationship_edges) — 그런 "가짜 티커"를 로고·섹터 조회에
     그대로 넘기면 yfinance/Finnhub에 의미 없는 호출만 늘어난다. 진짜 티커처럼 보이는
     것만 걸러서 넘긴다."""
