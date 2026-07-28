@@ -1,9 +1,6 @@
-"""정성적 근거: 뉴스 톤(키워드 기반 근사치) + 애널리스트 투자의견 집계.
+"""정성적 근거: 애널리스트/기업이벤트 관련 뉴스 필터링 + 애널리스트 투자의견 집계.
 
-⚠️ 뉴스 톤 분류는 정밀 감성분석 모델이 아니라 키워드 매칭 기반 근사치입니다.
-   (PRD 6.1 "뉴스/정성" 항목 — 정식 NLP 모델은 별도 개발 과제로 남아있음)
-
-단, 매칭은 단어 경계(word-boundary) 기준이라 부분문자열 오탐은 제거됨
+매칭은 단어 경계(word-boundary) 기준이라 부분문자열 오탐은 제거됨
    (예: "cut"이 exe*cut*ive에, "miss"가 co*mmiss*ion에, "win"이 s*win*g에 더 이상 걸리지 않음).
 그리고 기사가 실제로 해당 종목에 관한 것인지 관련성 게이트로 1차 필터링함.
 """
@@ -12,26 +9,6 @@ import re
 from datetime import date, datetime, timedelta
 
 from .data import get_finnhub_company_news
-
-POSITIVE_KEYWORDS = [
-    "surge", "beat", "beats", "upgrade", "upgraded", "record", "raises", "raised",
-    "wins", "win", "approval", "approved", "growth", "soar", "soars", "rally",
-    "outperform", "buy rating", "partnership", "contract award", "expansion",
-]
-NEGATIVE_KEYWORDS = [
-    "miss", "misses", "downgrade", "downgraded", "lawsuit", "recall", "delay",
-    "delayed", "cut", "cuts", "plunge", "plunges", "warns", "warning", "loss",
-    "losses", "investigation", "sec probe", "dilution", "offering", "bankruptcy",
-    "default", "underperform", "sell rating",
-]
-
-# 긍정어이지만 뒤에 붙는 맥락이 실제로는 부정인 문구 — 긍정 카운트에서 제외
-_POSITIVE_NEGATION_PHRASES = [
-    "raises concern", "raises concerns", "raise concern", "raise concerns",
-    "raises question", "raises questions", "raises doubt", "raises doubts",
-    "raises red flag", "raises red flags", "raises fear", "raises fears",
-    "raises risk", "raises risks", "raises alarm", "raises alarms",
-]
 
 
 def _kw_pattern(kw):
@@ -90,45 +67,6 @@ def is_relevant(article, ticker, company_name):
     if ticker and re.search(r"\b" + re.escape(ticker.lower()) + r"\b", text):
         return True
     return any(re.search(r"\b" + re.escape(tok) + r"\b", text) for tok in _company_tokens(company_name))
-
-
-def classify_news_tone(news_list, ticker=None, company_name=None):
-    """각 뉴스 헤드라인을 단어경계 키워드 매칭으로 bullish/bearish/neutral 근사 분류.
-    관련성 게이트를 통과한(해당 종목에 관한) 기사만 반환."""
-    results = []
-    for n in news_list:
-        if not is_relevant(n, ticker, company_name):
-            continue
-        headline = (n.get("headline") or "").lower()
-        pos_hits = _matched_keywords(headline, POSITIVE_KEYWORDS)
-        neg_hits = _matched_keywords(headline, NEGATIVE_KEYWORDS)
-
-        # "raises concerns" 같은 부정 맥락이면 raises/raised를 긍정에서 제외
-        if any(p in headline for p in _POSITIVE_NEGATION_PHRASES):
-            pos_hits = [kw for kw in pos_hits if kw not in ("raises", "raised", "raise")]
-
-        if pos_hits and not neg_hits:
-            lean = "bullish"
-        elif neg_hits and not pos_hits:
-            lean = "bearish"
-        else:
-            lean = "neutral"
-        results.append({
-            "headline": n.get("headline"),
-            "source": n.get("source"),
-            "datetime": n.get("datetime"),
-            "url": n.get("url"),
-            "lean": lean,
-            "matched": pos_hits + neg_hits,
-        })
-    return results
-
-
-def news_tone_summary(classified_news):
-    bullish = sum(1 for n in classified_news if n["lean"] == "bullish")
-    bearish = sum(1 for n in classified_news if n["lean"] == "bearish")
-    neutral = sum(1 for n in classified_news if n["lean"] == "neutral")
-    return {"bullish": bullish, "bearish": bearish, "neutral": neutral, "total": len(classified_news)}
 
 
 ANALYST_ACTION_KEYWORDS = [

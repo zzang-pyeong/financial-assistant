@@ -27,6 +27,16 @@ with st.container(key="page_header"):
     render_ticker_header(ticker)
 st.divider()
 
+# --- 애널리스트 투자의견 분포 (예전 Conflict Board 정성적 근거, 2026-07-28 이전) --------------
+analyst_trend = st.session_state.get("analyst_trend")
+if analyst_trend:
+    st.subheader("애널리스트 투자의견 분포")
+    cols = st.columns(4)
+    cols[0].metric("매수", analyst_trend["strongBuy"] + analyst_trend["buy"])
+    cols[1].metric("보유", analyst_trend["hold"])
+    cols[2].metric("매도", analyst_trend["strongSell"] + analyst_trend["sell"])
+    cols[3].metric("기준 시점", analyst_trend["period"] or "—")
+    st.divider()
 
 def _date_str(epoch):
     if not epoch:

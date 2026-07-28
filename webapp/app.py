@@ -1,18 +1,14 @@
 import sys
 from pathlib import Path
-from datetime import date
+from datetime import datetime
 
-import numpy as np
 import streamlit as st
 
 sys.path.append(str(Path(__file__).parent))
 
-from lib._shared_core.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
-from lib._shared_core.translate import to_korean
-from lib._shared_core.page_helpers import inject_base_styles, render_wordmark, news_date_str
+from lib._shared_core.peers import format_pct
+from lib._shared_core.page_helpers import inject_base_styles, render_wordmark, render_ticker_header
 from lib._shared_core.search import fetch_and_store_ticker, render_sidebar
-from lib._shared_core.config import BOARD_NEWS_LIMIT
-from lib._shared_core.charts import render_price_chart_figure, PERIOD_OPTIONS, PLOTLY_CONFIG
 
 if "step" not in st.session_state:
     st.session_state.step = "search"
@@ -29,123 +25,52 @@ def goto(step):
     st.rerun()
 
 
-def news_headline_link(n):
-    """뉴스 헤드라인을 원문 링크가 있으면 클릭 가능한 마크다운 링크로, 없으면 텍스트 그대로."""
-    headline = to_korean(n["headline"])
-    return f"[{headline}]({n['url']})" if n.get("url") else headline
+def _money(v):
+    if not isinstance(v, (int, float)):
+        return "N/A"
+    return f"${v/1e9:,.2f}B"
 
 
-def compute_flagged_context():
-    """이벤트/유동성/밸류에이션 등 부가 근거를 (문구, 방향태그, 카테고리)로 반환.
-    방향태그가 있어야 Step2/3에서 사용자가 선택한 포지션 방향에 맞춰 필터링할 수 있다
-    (기존엔 방향 무관하게 항상 Step2에만 나와서, 매도 검토 사용자에게는 반대로 보였음)."""
-    items = []  # (message, tag, category) — category: "risk" | "valuation"
-
-    if not st.session_state.regime_favorable:
-        items.append((
-            f"📉 시장 국면 비우호적 — QQQ({st.session_state.qqq_price:.2f}) < MA200({st.session_state.qqq_ma200:.2f})",
-            "bearish", "risk",
-        ))
-
-    ownership = st.session_state.ownership
-    if ownership["short_pct_float"] and ownership["short_pct_float"] > 0.1:
-        items.append((
-            f"🩳 공매도 비율 {ownership['short_pct_float']*100:.1f}% — 주목할 만한 수준",
-            "bearish", "risk",
-        ))
-
-    peer_stats = tier1_stats(st.session_state.peer_data["peers"])
-    fwd_pe = st.session_state.info.get("forwardPE")
-    if peer_stats and isinstance(fwd_pe, (int, float)) and fwd_pe > 0:
-        multiple = fwd_pe / peer_stats["mean"]
-        if multiple > 1.5:
-            items.append((
-                f"💰 포워드 PER {fwd_pe:.1f}가 동종 peer 평균({peer_stats['mean']:.1f}, n={peer_stats['n']})의 "
-                f"{multiple:.1f}배 — 고평가 논란",
-                "bearish", "valuation",
-            ))
-
-    target_health = st.session_state.target_health
-    if not target_health["fcf_positive"] and target_health["runway_months"] is not None \
-            and target_health["runway_months"] < RUNWAY_RISK_MONTHS:
-        items.append((
-            f"⏳ 현금 런웨이 {target_health['runway_months']:.1f}개월 — 단기 증자/희석 가능성 (PER과 무관한 생존 리스크)",
-            "bearish", "risk",
-        ))
-    if isinstance(target_health["quick_ratio"], (int, float)) and target_health["quick_ratio"] < QUICK_RATIO_RISK:
-        items.append((
-            f"💧 당좌비율 {target_health['quick_ratio']:.2f} — 단기 채무 대비 현금성자산 크게 부족",
-            "bearish", "risk",
-        ))
-
-    return items
+def _find_ceo(officers):
+    for o in officers or []:
+        if "ceo" in (o.get("title") or "").lower():
+            return o
+    return None
 
 
-def filter_context(context_items, category, tag):
-    """compute_flagged_context() 결과에서 카테고리·방향이 일치하는 문구만 뽑는다."""
-    return [msg for msg, t, cat in context_items if cat == category and t == tag]
+def render_company_intro(ticker, info):
+    """검색 직후 첫 화면 — Conflict Board를 걷어내고 그 자리를 대신한다(2026-07-28).
+    다 아는 회사(AAPL/NVDA 등)도 직원 수·배당정책·CEO 이름 같은 건 의외로 모르는 경우가
+    많아서 넣었다. 회사 창업연도는 yfinance에 필드 자체가 없어 상장일
+    (firstTradeDateMilliseconds)로 대체했고, CEO 취임/교체 시점도 데이터가 없어
+    이름·직함만 표시한다(추측해서 채우지 않음)."""
+    render_ticker_header(ticker)
+    st.divider()
 
+    cols = st.columns(4)
+    cols[0].metric("시가총액", _money(info.get("marketCap")))
 
-def collect_bull_bear_lines():
-    """기술적/이벤트·유동성/밸류에이션/정성적 근거를 매수 관점·매도 관점으로 나눠서 반환.
-    포지션 의도와 무관하게 항상 같은 내용 — '비교 보기'와 Conflict Board가 함께 쓴다."""
-    signals = st.session_state.signals
-    tech_bull = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bullish"]
-    tech_bear = [f"{name}: {desc}" for name, desc, tag in signals if tag == "bearish"]
+    employees = info.get("fullTimeEmployees")
+    cols[1].metric("직원 수", f"{employees:,}명" if isinstance(employees, int) else "N/A")
 
-    analyst_trend = st.session_state.analyst_trend
-    qual_bull, qual_bear = [], []
-    if analyst_trend and analyst_trend["lean"] != "neutral":
-        line = (f"애널리스트 의견({analyst_trend['period']}): 매수 "
-                f"{analyst_trend['strongBuy']+analyst_trend['buy']} / 매도 "
-                f"{analyst_trend['strongSell']+analyst_trend['sell']}")
-        (qual_bull if analyst_trend["lean"] == "bullish" else qual_bear).append(line)
+    div_yield = info.get("dividendYield")  # 이 필드는 fraction이 아니라 값 그대로가 %(예: 0.32 = 0.32%)
+    if isinstance(div_yield, (int, float)) and div_yield > 0:
+        payout_str = format_pct(info.get("payoutRatio")) or "N/A"
+        cols[2].metric("배당수익률", f"{div_yield:.2f}%", help=f"배당성향 {payout_str}")
+    else:
+        cols[2].metric("배당정책", "무배당")
 
-    # 헤드라인 하나당 번역 API 호출 1회 — 전체를 다 돌면(수백 건) 화면이 오래 멈춰 보이므로
-    # 최신 순으로 일정 개수만 번역/표시 대상으로 삼는다. 이 개수는 fetch_and_store_ticker()가
-    # 수집 단계에서 미리 병렬 번역해두는 개수(BOARD_NEWS_LIMIT)와 반드시 같아야 한다 —
-    # 여기서 더 많이 돌면 초과분이 캐시 미스가 나서 렌더 도중 순차 요청이 다시 발생한다.
-    for n in st.session_state.news_classified[:BOARD_NEWS_LIMIT]:
-        date_str = news_date_str(n)
-        date_part = f" ({date_str})" if date_str else ""
-        line = f"뉴스: {news_headline_link(n)}{date_part}"
-        if n["lean"] == "bullish":
-            qual_bull.append(line)
-        elif n["lean"] == "bearish":
-            qual_bear.append(line)
+    first_trade_ms = info.get("firstTradeDateMilliseconds")
+    listed = (
+        datetime.utcfromtimestamp(first_trade_ms / 1000).strftime("%Y-%m-%d")
+        if isinstance(first_trade_ms, (int, float)) else "N/A"
+    )
+    cols[3].metric("상장일", listed)
 
-    context_items = compute_flagged_context()
-
-    return {
-        "bullish": {
-            "기술적 근거": tech_bull,
-            "이벤트·유동성": filter_context(context_items, "risk", "bullish"),
-            "밸류에이션": filter_context(context_items, "valuation", "bullish"),
-            "정성적 근거": qual_bull,
-        },
-        "bearish": {
-            "기술적 근거": tech_bear,
-            "이벤트·유동성": filter_context(context_items, "risk", "bearish"),
-            "밸류에이션": filter_context(context_items, "valuation", "bearish"),
-            "정성적 근거": qual_bear,
-        },
-    }
-
-
-def render_side(title, groups, preview_count=5):
-    st.subheader(title)
-    for group_name, lines in groups.items():
-        st.markdown(f"**{group_name}**")
-        if lines:
-            visible, rest = lines[:preview_count], lines[preview_count:]
-            for line in visible:
-                st.markdown(f"- {line}")
-            if rest:
-                with st.expander(f"더보기 ({len(rest)}개)"):
-                    for line in rest:
-                        st.markdown(f"- {line}")
-        else:
-            st.caption("없음")
+    hq = ", ".join(p for p in [info.get("city"), info.get("state"), info.get("country")] if p)
+    ceo = _find_ceo(info.get("companyOfficers"))
+    ceo_str = f"**{ceo['name']}** ({ceo['title']})" if ceo else "**정보 없음**"
+    st.write(f"🏢 본사: **{hq or 'N/A'}**&nbsp;&nbsp;&nbsp;&nbsp;👤 CEO: {ceo_str}")
 
 
 if "ticker" in st.session_state:
@@ -190,36 +115,11 @@ if st.session_state.step == "search":
             submitted = st.form_submit_button("Enter", type="primary", use_container_width=True)
 
     if submitted and fetch_and_store_ticker(raw_input):
-        goto("compare")
+        goto("intro")
 
 # ----------------------------------------------------------------------------
-# COMPARE: 매수 관점 vs 매도 관점 비교 (핵심 기능 — 포지션 선택 없이 바로 확인)
+# INTRO: 검색 직후 첫 화면 — 회사 기초 정보 (예전 Conflict Board 자리, 2026-07-28 교체)
 # ----------------------------------------------------------------------------
-elif st.session_state.step == "compare":
-    render_wordmark("Conflict", "Board", size="2.8rem", align="center", margin="1vh 0 2rem 0")
-
-    # 근거를 읽기 전에 지금 가격이 어떤 모양인지부터 한눈에 보이게 — 상세 기간·분봉은
-    # Price Chart 페이지가 따로 있으니 여기서는 최근 1개월 일봉만 가볍게 보여준다.
-    st.plotly_chart(
-        render_price_chart_figure(st.session_state.df, PERIOD_OPTIONS["1개월"]),
-        use_container_width=True, config=PLOTLY_CONFIG,
-    )
-    st.caption("최근 1개월 일봉입니다 — 더 긴 기간·분봉은 Price Chart 페이지에서 볼 수 있습니다.")
-
-    lines = collect_bull_bear_lines()
-    col1, col2 = st.columns(2)
-    with col1:
-        render_side("🔵 매수 관점", lines["bullish"])
-    with col2:
-        render_side("🟠 매도 관점", lines["bearish"])
-
-    # 방향과 무관한 참고사항은 실제로 급한 것만(실적 임박·저유동) 노출 — 평소엔 생략
-    earnings_date = st.session_state.earnings_date
-    ownership = st.session_state.ownership
-    if earnings_date:
-        days_left = int(np.busday_count(date.today(), earnings_date))
-        if 0 <= days_left <= 10:
-            st.caption(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능 (방향 무관)")
-    if ownership["float_ratio"] and ownership["float_ratio"] < 0.3:
-        st.caption(f"💧 저유동주식 — 유동주식비율 {ownership['float_ratio']*100:.1f}% (방향과 무관하게 변동성 왜곡 위험)")
+elif st.session_state.step == "intro":
+    render_company_intro(st.session_state.ticker, st.session_state.info)
 

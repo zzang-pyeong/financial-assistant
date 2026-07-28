@@ -1,6 +1,8 @@
 import sys
+from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -24,6 +26,14 @@ with st.container(key="page_header"):
     render_wordmark("Financial", "Statements", align="center")
     render_ticker_header(ticker)
 st.divider()
+
+# 실적 임박 경고 (예전 Conflict Board 방향-무관 참고사항, 2026-07-28 이전) — 실제로 급할
+# 때(영업일 기준 10일 이내)만 노출, 평소엔 생략.
+earnings_date = st.session_state.get("earnings_date")
+if earnings_date:
+    days_left = int(np.busday_count(date.today(), earnings_date))
+    if 0 <= days_left <= 10:
+        st.caption(f"📅 실적 발표일이 {earnings_date} (D-{days_left})로 임박 — 변동성 급증 가능")
 
 st.caption(
     "⚠️ 아래 \"경영진 코멘트\"는 회사가 실적발표 8-K(또는 관련 보도)에서 실제로 밝힌 문장을 "

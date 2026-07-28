@@ -10,6 +10,8 @@ from lib._shared_core.charts import render_price_chart_figure, PERIOD_OPTIONS, I
 from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
 from lib._shared_core.search import render_sidebar
 
+_SIGNAL_ICON = {"bullish": "🔵", "bearish": "🟠", "neutral": "⚪"}
+
 st.set_page_config(page_title="Price Chart — EnterTicker", layout="wide")
 inject_base_styles()
 require_analysis()
@@ -21,6 +23,15 @@ ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Price", "Chart", align="center")
     render_ticker_header(ticker)
+st.divider()
+
+# 기술적 신호 — 일봉 기준(6개월 조회 시점) RSI/이동평균/볼린저/MACD를 bullish/bearish/
+# neutral로 판정한 것. 예전엔 Conflict Board가 매수/매도 관점으로 나눠서 보여줬지만, 여기는
+# 차트 자체를 보는 페이지라 방향으로 나누지 않고 4개 지표를 있는 그대로 병치한다.
+signal_cols = st.columns(4)
+for col, (name, desc, tag) in zip(signal_cols, st.session_state.signals):
+    col.write(f"{_SIGNAL_ICON[tag]} **{name}**")
+    col.caption(desc)
 st.divider()
 
 list_col, chart_col = st.columns([1, 5])

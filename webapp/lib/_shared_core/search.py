@@ -16,13 +16,12 @@ from lib._shared_core.ownership import (
     get_ownership_summary,
 )
 from lib._shared_core.qualitative import (
-    classify_news_tone, news_tone_summary, classify_analyst_trend,
+    classify_analyst_trend,
     filter_analyst_related_news, filter_corporate_event_news, match_counterparties,
     summarize_price_target, normalize_upgrade_downgrade,
 )
-from lib._shared_core.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS, BOARD_NEWS_LIMIT
+from lib._shared_core.config import ANALYST_NEWS_LOOKBACK_DAYS
 from lib._shared_core.known_companies import STATIC_KNOWN_COMPANIES
-from lib._shared_core.translate import prefetch_korean
 
 MAX_SEARCH_HISTORY = 30
 
@@ -67,28 +66,16 @@ def fetch_and_store_ticker(raw_input):
             info = get_yf_info(ticker)
             earnings_date = get_yf_calendar(ticker)
 
-            qqq_df = get_price_history("QQQ", "2023-01-01")
-            qqq_ma200 = qqq_df["Close"].rolling(200).mean().iloc[-1]
-            qqq_price = qqq_df["Close"].iloc[-1]
-            regime_favorable = qqq_price > qqq_ma200
-
             peer_data = classify_peers(ticker)
             target_health = get_financial_health(ticker)
             ownership = get_ownership_summary(ticker)
 
-            # 정성적 근거: 뉴스 톤(키워드 근사치) + 애널리스트 투자의견
             # 관련성 게이트를 위해 기업명 전달 — 종목과 무관한 기사를 걸러냄
             company_name = info.get("longName") or info.get("shortName") or ticker
             today = date.today()
             today_str = today.isoformat()
-            # 56일 뉴스 톤과 60일 상세 뉴스가 같은 API를 두 번 호출하던 것을 하나로 통합.
             wide_from_str = (today - timedelta(days=ANALYST_NEWS_LOOKBACK_DAYS)).isoformat()
             wide_news = get_finnhub_company_news(ticker, wide_from_str, today_str)
-            recent_cutoff = (today - timedelta(days=NEWS_LOOKBACK_DAYS)).isoformat()
-            recent_news = [n for n in wide_news if n.get("datetime") and
-                           date.fromtimestamp(n["datetime"]).isoformat() >= recent_cutoff]
-            news_classified = classify_news_tone(recent_news, ticker, company_name)
-            news_summary = news_tone_summary(news_classified)
 
             rec_trends = get_finnhub_recommendation_trends(ticker)
             analyst_trend = classify_analyst_trend(rec_trends)
@@ -125,16 +112,6 @@ def fetch_and_store_ticker(raw_input):
             st.error(f"데이터 수집 중 오류: {e}")
             return False
 
-    # 번역은 수집이 다 끝난 뒤 별도 스피너로 — Conflict Board가 렌더될 때 헤드라인마다
-    # to_korean()이 순차 HTTP 요청을 보내던 것을 여기서 미리 병렬로 채운다. 예전에는 이
-    # 대기가 스피너 밖(렌더 도중)에 있어서 아무 안내 없이 화면이 굳은 것처럼 보였다.
-    # 번역 실패는 원문 폴백으로 흡수되므로 여기서 검색 자체를 실패시키지 않는다.
-    try:
-        with st.spinner("뉴스 헤드라인 번역 중..."):
-            prefetch_korean([n["headline"] for n in news_classified[:BOARD_NEWS_LIMIT]])
-    except Exception:
-        pass
-
     # 새 종목 검색 — 이전 종목의 포지션 의도·메모·손절/익절가가 새 종목에 잘못 이어붙는 것을 방지
     for k in (
         "intent", "memo", "stop", "take_profit", "entry_price",
@@ -145,10 +122,8 @@ def fetch_and_store_ticker(raw_input):
     st.session_state.update(
         ticker=ticker,
         df=df, ind=ind, info=info, earnings_date=earnings_date,
-        qqq_price=qqq_price, qqq_ma200=qqq_ma200, regime_favorable=regime_favorable,
         peer_data=peer_data, target_health=target_health, ownership=ownership,
         signals=signals,
-        news_classified=news_classified, news_summary=news_summary,
         analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
         price_target=price_target, analyst_actions=analyst_actions,
         relationship_edges=relationship_edges,
@@ -180,7 +155,7 @@ def render_sidebar_search():
 
     if submitted and raw_input:
         if fetch_and_store_ticker(raw_input):
-            st.session_state.step = "compare"
+            st.session_state.step = "intro"
             st.switch_page("app.py")
 
 
