@@ -26,8 +26,11 @@ def goto(step):
 
 
 def _money(v):
+    """조 단위($1,000B) 이상은 T로 축약 — st.metric 등 한 줄 표시 공간에서 안 잘리게."""
     if not isinstance(v, (int, float)):
         return "N/A"
+    if abs(v) >= 1e12:
+        return f"${v/1e12:,.2f}T"
     return f"${v/1e9:,.2f}B"
 
 
@@ -36,6 +39,23 @@ def _find_ceo(officers):
         if "ceo" in (o.get("title") or "").lower():
             return o
     return None
+
+
+def _info_card(label, value, sub=None):
+    """st.metric은 값이 조금만 길어도 말줄임표로 잘라버려서(예: TSLA 시가총액 "$1,193.6..."),
+    직접 HTML 카드로 그린다 — flex-wrap이라 좁은 화면에선 줄바꿈되고, 값 자체도
+    word-break로 안전하게 감싸 잘리지 않는다."""
+    sub_html = (
+        f"<div style='font-size:0.75rem; color:#9ca3af; margin-top:0.25rem;'>{sub}</div>"
+        if sub else ""
+    )
+    return (
+        "<div style='flex:1 1 150px; min-width:150px; padding:0.9rem 1.1rem; "
+        "border:1px solid #e5e7eb; border-radius:12px; background:#fafbfc;'>"
+        f"<div style='font-size:0.8rem; color:#6b7280; margin-bottom:0.35rem;'>{label}</div>"
+        f"<div style='font-size:1.4rem; font-weight:700; color:#111827; line-height:1.25; "
+        f"word-break:break-word;'>{value}</div>{sub_html}</div>"
+    )
 
 
 def render_company_intro(ticker, info):
@@ -47,25 +67,32 @@ def render_company_intro(ticker, info):
     render_ticker_header(ticker)
     st.divider()
 
-    cols = st.columns(4)
-    cols[0].metric("시가총액", _money(info.get("marketCap")))
-
     employees = info.get("fullTimeEmployees")
-    cols[1].metric("직원 수", f"{employees:,}명" if isinstance(employees, int) else "N/A")
+    employees_str = f"{employees:,}명" if isinstance(employees, int) else "N/A"
 
     div_yield = info.get("dividendYield")  # 이 필드는 fraction이 아니라 값 그대로가 %(예: 0.32 = 0.32%)
     if isinstance(div_yield, (int, float)) and div_yield > 0:
         payout_str = format_pct(info.get("payoutRatio")) or "N/A"
-        cols[2].metric("배당수익률", f"{div_yield:.2f}%", help=f"배당성향 {payout_str}")
+        div_label, div_value, div_sub = "배당수익률", f"{div_yield:.2f}%", f"배당성향 {payout_str}"
     else:
-        cols[2].metric("배당정책", "무배당")
+        div_label, div_value, div_sub = "배당정책", "무배당", None
 
     first_trade_ms = info.get("firstTradeDateMilliseconds")
     listed = (
         datetime.utcfromtimestamp(first_trade_ms / 1000).strftime("%Y-%m-%d")
         if isinstance(first_trade_ms, (int, float)) else "N/A"
     )
-    cols[3].metric("상장일", listed)
+
+    cards = "".join([
+        _info_card("시가총액", _money(info.get("marketCap"))),
+        _info_card("직원 수", employees_str),
+        _info_card(div_label, div_value, div_sub),
+        _info_card("상장일", listed),
+    ])
+    st.markdown(
+        f"<div style='display:flex; flex-wrap:wrap; gap:0.9rem; margin:1.4rem 0 1.6rem 0;'>{cards}</div>",
+        unsafe_allow_html=True,
+    )
 
     hq = ", ".join(p for p in [info.get("city"), info.get("state"), info.get("country")] if p)
     ceo = _find_ceo(info.get("companyOfficers"))
