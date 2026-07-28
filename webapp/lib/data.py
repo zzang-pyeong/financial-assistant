@@ -234,12 +234,19 @@ def get_yf_upgrades_downgrades(ticker):
             except Exception:
                 epoch = None
             pt = row.get("currentPriceTarget")
+            prior_pt = row.get("priorPriceTarget")
             rows.append({
                 "date": epoch, "firm": row.get("Firm"),
                 "from_grade": row.get("FromGrade"), "to_grade": row.get("ToGrade"),
                 "action": row.get("Action"),
                 # NaN != NaN — pandas가 값 없을 때 NaN을 주므로 이 트릭으로 걸러낸다.
                 "price_target": float(pt) if isinstance(pt, (int, float)) and pt == pt else None,
+                # 신규 커버리지 개시(초기 등급 부여) 건은 이전 목표주가가 없어 yfinance가
+                # 0.0을 준다 — 진짜 $0 목표주가는 없으므로 0도 "없음"으로 취급.
+                "prior_price_target": (
+                    float(prior_pt) if isinstance(prior_pt, (int, float))
+                    and prior_pt == prior_pt and prior_pt > 0 else None
+                ),
             })
         return rows
     except Exception:

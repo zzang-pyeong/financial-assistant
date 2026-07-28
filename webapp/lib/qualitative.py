@@ -9,7 +9,7 @@
 """
 
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from .data import get_finnhub_company_news
 
@@ -462,11 +462,16 @@ def summarize_price_target(finnhub_pt, yf_pt):
     return None
 
 
-def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
+def normalize_upgrade_downgrade(finnhub_rows, yf_rows, lookback_days=365):
     """애널리스트 상향/하향 이력을 화면용 공통 스키마로 정리한다. Finnhub 프리미엄
     전용 엔드포인트가 비어있을 때만(무료 키 제약) yfinance로 폴백 — 두 소스를 합치면
     같은 이벤트가 중복 집계될 위험이 있어 폴백만 쓴다(summarize_price_target과 동일 원칙).
-    최신순으로 정렬해 상위 limit개만 반환."""
+    개수로 자르면(예: 상위 15건) 커버리지가 활발한 종목은 최근 며칠치만 남는 문제가
+    있어(사용자 피드백), 최근 lookback_days(기본 365일=최소 1년) 안의 건은 개수 제한 없이
+    전부 반환한다. 날짜 없는 항목은 언제 있었는지 알 수 없어 보수적으로 제외."""
+    cutoff_epoch = int(
+        datetime.combine(date.today() - timedelta(days=lookback_days), datetime.min.time()).timestamp()
+    )
     rows = []
     if finnhub_rows:
         for r in finnhub_rows:
@@ -476,7 +481,7 @@ def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
                 "action_label": _action_label(r.get("action")),
                 "broker_tier": classify_broker_tier(r.get("company")),
                 # Finnhub upgrade-downgrade 응답에는 목표주가 필드가 없다 — 지어내지 않고 None.
-                "price_target": None, "source": "Finnhub",
+                "price_target": None, "prior_price_target": None, "source": "Finnhub",
             })
     elif yf_rows:
         for r in yf_rows:
@@ -485,10 +490,12 @@ def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
                 "from_grade": r.get("from_grade") or "", "to_grade": r.get("to_grade") or "",
                 "action_label": _action_label(r.get("action")),
                 "broker_tier": classify_broker_tier(r.get("firm")),
-                "price_target": r.get("price_target"), "source": "Yahoo Finance",
+                "price_target": r.get("price_target"),
+                "prior_price_target": r.get("prior_price_target"), "source": "Yahoo Finance",
             })
-    rows.sort(key=lambda r: r["date"] or 0, reverse=True)
-    return rows[:limit]
+    rows = [r for r in rows if r["date"] and r["date"] >= cutoff_epoch]
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return rows
 
 
 # 상대회사 자체 뉴스 검색 기간 — SEC 공시는 몇 년치를 보지만, 뉴스는 최근 보도 위주로만

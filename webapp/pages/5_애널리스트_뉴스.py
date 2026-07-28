@@ -35,6 +35,19 @@ def _date_str(epoch):
         return ""
 
 
+def _price_target_change(a):
+    """이전 → 신규 목표주가 전환을 "$X → $Y (+Z%)" 형태로. 이전 목표주가가 없으면
+    (신규 커버리지 등) 신규 목표주가만, 그마저 없으면 빈 칸."""
+    current = a.get("price_target")
+    prior = a.get("prior_price_target")
+    if current is None:
+        return ""
+    if prior is None or prior == current:
+        return f"${current:.2f}"
+    pct = (current / prior - 1) * 100
+    return f"${prior:.2f} → ${current:.2f} ({pct:+.1f}%)"
+
+
 def _price_at(df, epoch):
     """df(일봉 가격 이력)에서 epoch 시점 또는 그 직전 마지막 거래일 종가를 찾는다.
     df가 2024-01-01부터라(lib/search.py) 그보다 오래된 등급 변경은 못 찾아 None —
@@ -73,7 +86,7 @@ if price_target:
 analyst_actions = st.session_state.get("analyst_actions", [])
 if analyst_actions:
     price_df = st.session_state.get("df")
-    st.subheader("최근 상향/하향 이력")
+    st.subheader("최근 1년 상향/하향 이력")
     st.dataframe(
         pd.DataFrame([{
             "날짜": _date_str(a["date"]),
@@ -84,16 +97,15 @@ if analyst_actions:
             "당시 주가": (
                 f"${p:.2f}" if (p := _price_at(price_df, a["date"])) is not None else ""
             ),
-            "제시 목표주가": (
-                f"${a['price_target']:.2f}" if a.get("price_target") is not None else ""
-            ),
+            "목표주가 변경": _price_target_change(a),
         } for a in analyst_actions]),
-        hide_index=True, use_container_width=True,
+        hide_index=True, use_container_width=True, height=420,
     )
     st.caption(
-        f"출처: {analyst_actions[0]['source']}. ⚠️ '증권사 규모'는 이름 인지도 기준 근사치일 "
-        "뿐 실제 리서치 적중률·트랙레코드가 아닙니다 — 대형 IB라고 항상 더 정확한 것은 아닙니다. "
-        "'제시 목표주가'는 Finnhub 소스에서는 제공되지 않아 비어있을 수 있습니다."
+        f"최근 1년 내 전체 {len(analyst_actions)}건. 출처: {analyst_actions[0]['source']}. "
+        "⚠️ '증권사 규모'는 이름 인지도 기준 근사치일 뿐 실제 리서치 적중률·트랙레코드가 "
+        "아닙니다 — 대형 IB라고 항상 더 정확한 것은 아닙니다. '목표주가 변경'은 Finnhub "
+        "소스에서는 제공되지 않아 비어있을 수 있습니다."
     )
     st.divider()
 
