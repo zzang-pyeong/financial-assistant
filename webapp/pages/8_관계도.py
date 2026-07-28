@@ -22,6 +22,7 @@ from lib.sec_filings import (
 from lib.logos import get_circular_logos
 from lib.sectors import get_sectors
 from lib.translate import to_korean, prefetch_korean
+from lib.qualitative import find_counterparty_context_news
 
 st.set_page_config(page_title="Connection Map — EnterTicker", layout="wide")
 inject_base_styles()
@@ -127,23 +128,29 @@ def _date_str(epoch):
 _NO_CONTEXT_PLACEHOLDER = "원문 확인 필요 (문맥 추출 안 됨)"
 
 
-def _best_description(g, max_chars=200):
+def _best_description(g, news_hit=None, max_chars=200):
     """"관계 유형"(전략적 제휴/공시 내 언급 등)만으로는 실제로 뭘 하는 관계인지 알 수
     없어서, 그래프 hover와 근거 원문 표에만 있던 실제 문맥(뉴스 요약 또는 공시 발췌)을
-    요약 표의 "핵심 발췌" 컬럼에도 끌어와 한눈에 보이게 한다. 문맥(context)이 있는 근거
-    중 최신 것을 우선 채택하고, 문맥을 하나도 못 얻은 공시 내 언급은 헤드라인 자체가
-    내용이 없으므로 원문 확인을 안내한다 — 뉴스/지분 보유 헤드라인은 그 자체로 내용이
-    있어 그대로 쓴다.
+    요약 표의 "핵심 발췌" 컬럼에도 끌어와 한눈에 보이게 한다.
+
+    news_hit(있으면): 상대회사 자신의 뉴스에서 찾은 기사(find_counterparty_context_news
+    결과) — SEC 발췌만으론 뭘 하는 관계인지 알기 어렵다는 피드백 때문에 최우선으로 쓴다.
+    없으면 문맥(context)이 있는 근거 중 최신 것을 채택하고, 그것도 없는 공시 내 언급은
+    헤드라인 자체가 내용이 없으므로 원문 확인을 안내한다 — 뉴스/지분 보유 헤드라인은
+    그 자체로 내용이 있어 그대로 쓴다.
 
     lib/sec_filings.py가 문장 경계에서 다듬어 넘겨주므로(최대 320자), 여기서 다시 글자
     수로 뚝 자르면 "단어 중간에서 끊긴다"는 문제가 되풀이된다 — 자를 일이 있어도 단어
     경계(공백)에서 자른다."""
-    with_context = [h for h in g["headlines"] if h[4]]
-    if with_context:
-        text = max(with_context, key=lambda h: h[0])[4]
+    if news_hit:
+        text = "[상대사 보도] " + (news_hit.get("summary") or news_hit.get("headline") or "")
     else:
-        latest = max(g["headlines"], key=lambda h: h[0])
-        text = _NO_CONTEXT_PLACEHOLDER if latest[5] == "공시 내 언급" else latest[1]
+        with_context = [h for h in g["headlines"] if h[4]]
+        if with_context:
+            text = max(with_context, key=lambda h: h[0])[4]
+        else:
+            latest = max(g["headlines"], key=lambda h: h[0])
+            text = _NO_CONTEXT_PLACEHOLDER if latest[5] == "공시 내 언급" else latest[1]
     if len(text) > max_chars:
         text = text[:max_chars].rsplit(" ", 1)[0].rstrip(",;:.…") + "…"
     return text
@@ -269,6 +276,29 @@ _DIRECTION_LABELS = {
     "unknown": "미확인",
 }
 
+# --- 상대회사 자체 뉴스로 문맥 보강 (사용자 피드백: SEC 발췌만으로는 무슨 관계인지
+# 알아내는 데 개인 노력이 든다) — 뉴스 근거가 아직 없는 상대기업 중 상위 몇 개에만, 그
+# 회사 자신의 최근 뉴스에서 허브 기업이 언급된 기사를 찾아본다. 상대기업 수만큼 API
+# 호출이 늘어나므로 상한을 두고 세션에 캐시한다.
+_MAX_COUNTERPARTY_NEWS_LOOKUPS = 10
+enrich_candidates = [
+    cp for cp, g in grouped
+    if g["news_count"] == 0 and _looks_like_ticker(cp)
+][:_MAX_COUNTERPARTY_NEWS_LOOKUPS]
+enrich_cache_key = (ticker, tuple(enrich_candidates))
+if st.session_state.get("relationship_news_enrich_key") != enrich_cache_key:
+    enrichment = {}
+    if enrich_candidates:
+        with st.spinner("상대기업 자체 뉴스에서 관련 보도 확인 중..."):
+            for cp in enrich_candidates:
+                hit = find_counterparty_context_news(hub_name, ticker, cp)
+                if hit:
+                    enrichment[cp] = hit
+    st.session_state.update(
+        relationship_news_enrichment=enrichment, relationship_news_enrich_key=enrich_cache_key,
+    )
+enrichment = st.session_state.get("relationship_news_enrichment", {})
+
 subheader_col, translate_col = st.columns([3, 1])
 with subheader_col:
     st.subheader("상대기업별 요약")
@@ -281,6 +311,7 @@ with translate_col:
 summary_rows = []
 for cp_ticker, g in grouped:
     latest = max(g["headlines"], key=lambda h: h[0])
+    news_hit = enrichment.get(cp_ticker)
     summary_rows.append({
         "상대기업": g["name"] or cp_ticker,
         "관계 유형": ", ".join(g["types"]),
@@ -288,8 +319,8 @@ for cp_ticker, g in grouped:
         "상태": g["latest_status"] or "",
         "지분율": f"{g['ownership_pct']:.1f}%" if g["ownership_pct"] is not None else "",
         "최근 근거일": _date_str(g["latest_dt"]),
-        "핵심 발췌": _best_description(g),
-        "원문": latest[2] or None,
+        "핵심 발췌": _best_description(g, news_hit),
+        "원문": (news_hit["url"] if news_hit else latest[2]) or None,
     })
 
 if show_korean:

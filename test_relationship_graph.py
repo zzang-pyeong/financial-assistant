@@ -10,11 +10,12 @@ from lib.charts import (
     _node_positions, _RING_CAPACITY,
 )
 
-def edge(cp, name, rtype, status, dt, url, context=None):
+def edge(cp, name, rtype, status, dt, url, context=None, source_kind="SEC 공시"):
     return {
         "counterparty_ticker": cp, "counterparty_name": name,
         "relationship_type": rtype, "status": status, "evidence_level": "테스트",
         "headline": f"{cp} 관련 헤드라인", "url": url, "datetime": dt, "context": context,
+        "source_kind": source_kind,
     }
 
 # 15개 회사 — 한 링 용량(10)을 넘겨서 다중 링 배치가 되는지 확인
@@ -26,9 +27,9 @@ for i in range(15):
                           1_700_000_000 + i * 1000 + j, f"https://sec.gov/{cp}/{j}",
                           context=f"...supply agreement with Company {i}..."))
 edges.append(edge("CP00", "Company 0 Inc.", "M&A", "철회·무산",
-                  1_750_000_000, "https://news/CP00"))
+                  1_750_000_000, "https://news/CP00", source_kind="뉴스"))
 edges.append(edge("CP01", "Company 1 Inc.", "공급 계약", "체결·진행",
-                  1_760_000_000, "https://news/CP01"))
+                  1_760_000_000, "https://news/CP01", source_kind="뉴스"))
 
 grouped = group_relationship_edges(edges)
 

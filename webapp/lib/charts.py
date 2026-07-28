@@ -324,7 +324,13 @@ def group_relationship_edges(edges):
             dt, e["headline"], e.get("url"), e["status"], e.get("context"), e["relationship_type"],
             e.get("evidence_grade", "D"), e.get("source_kind", ""),
         ))
-        if e["relationship_type"] == "공시 내 언급":
+        # source_kind로 판정한다(relationship_type 문자열이 아니라) — "공시 내 언급"이
+        # promote_mentions_with_context()로 "공급·고객 계약" 등으로 승격돼도 source_kind는
+        # 그대로 "SEC 공시"라 승격된 엣지도 여전히 filing_count로 잡힌다. relationship_type
+        # 문자열로만 판정했을 때는 승격된 엣지가 news_count로 잘못 잡혀, "뉴스 근거가 이미
+        # 있다"고 오판해 상대회사 뉴스 보강(find_counterparty_context_news)을 건너뛰는
+        # 버그가 있었다.
+        if e.get("source_kind") == "SEC 공시":
             g["filing_count"] += 1
         else:
             g["news_count"] += 1

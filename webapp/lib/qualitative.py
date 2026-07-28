@@ -9,6 +9,9 @@
 """
 
 import re
+from datetime import date, timedelta
+
+from .data import get_finnhub_company_news
 
 POSITIVE_KEYWORDS = [
     "surge", "beat", "beats", "upgrade", "upgraded", "record", "raises", "raised",
@@ -406,3 +409,77 @@ def classify_analyst_trend(rec_trends):
         "hold": hold, "sell": latest.get("sell", 0), "strongSell": latest.get("strongSell", 0),
         "total": total, "lean": lean,
     }
+
+
+# 상대회사 자체 뉴스 검색 기간 — SEC 공시는 몇 년치를 보지만, 뉴스는 최근 보도 위주로만
+# 충분하다(오래된 기사는 지금 관계 설명으로 안 맞을 수 있음).
+_COUNTERPARTY_NEWS_LOOKBACK_DAYS = 180
+
+
+# 실측(NVDA 검색 시): 상대회사 뉴스에서 허브 티커/이름이 헤드라인+요약 어디든 있으면
+# 매칭으로 인정하니 "SNDK, NVDA, SKHY, ASML Stocks Extend Slide Overnight"처럼 여러
+# 종목을 나열한 시장 전반 요약 기사까지 걸려 나왔다 — 이런 기사는 그 관계에 대한 설명이
+# 전혀 아니다. 그래서 (1) 매칭은 헤드라인에 한정하고 (2) 시황 요약·"N개 종목" 나열형
+# 헤드라인은 제외한다. 그래도 허브가 헤드라인에 있다고 반드시 "이 상대와의 관계"를
+# 설명하는 기사라는 보장은 없다(예: 제3의 회사가 NVIDIA와 한 일을 다루는 기사가 그
+# 제3의 회사와 무관한 다른 회사 뉴스 피드에 잡히는 경우) — 링크를 그대로 노출해 사용자가
+# 직접 확인하게 하는 이유가 여기에 있다.
+_MARKET_ROUNDUP_RE = re.compile(
+    r"\bstocks?\b.{0,20}\b(slide|rally|surge|drop|gain|climb|fall|extend)|"
+    r"\bmarket\s+(midday|today|update|wrap|close|open)\b|"
+    r"\b\d+\s+(stocks?|companies)\s+to\s+(buy|watch|sell)\b|"
+    r"\bstocks?\s+to\s+(buy|watch|sell)\b|"
+    r"\b(dow|nasdaq|s&p)\b",
+    re.IGNORECASE,
+)
+# 대문자 2~5자 토큰(티커로 보이는 것)이 쉼표로 3개 이상 이어지는 헤드라인도 시황 나열형.
+_MULTI_TICKER_LIST_RE = re.compile(r"\b[A-Z]{2,5}\b(?:\s*,\s*[A-Z]{2,5}\b){2,}")
+
+
+def _looks_like_market_roundup(headline):
+    return bool(_MARKET_ROUNDUP_RE.search(headline) or _MULTI_TICKER_LIST_RE.search(headline))
+
+
+def find_counterparty_context_news(hub_name, hub_ticker, counterparty_ticker):
+    """상대회사 자신의 최근 뉴스에서 허브 기업이 헤드라인에 언급된 기사를 찾는다.
+
+    SEC 공시 기반 관계("공급·고객 계약" 등)는 원문 발췌만으로는 실제로 뭘 하는 관계인지
+    알기 어려운 경우가 많다는 피드백 — 작은 고객사·파트너사는 자기 입장에서 보도자료를
+    내는 일이 많아서, 그쪽 뉴스가 SEC 발췌보다 훨씬 읽기 쉬운 설명이 되는 경우가 있다.
+    허브 쪽 뉴스는 이미 match_counterparties()가 훑으므로, 여기서는 상대 쪼그만 본다
+    (양방향으로 보면 더 잡히지만 상대기업 수만큼 API 호출이 늘어 상위 몇 개로 제한해야
+    한다 — 호출부(pages/8_관계도.py) 책임).
+
+    가장 최근에 매칭된 기사 하나를 반환, 못 찾으면 None — 보도가 전혀 없는 관계도 많고,
+    찾아도 실제로는 무관한 기사일 수 있다(위 주석 참고) — 원문 링크를 항상 같이 보여줘야
+    한다."""
+    if not counterparty_ticker:
+        return None
+    today = date.today()
+    news = get_finnhub_company_news(
+        counterparty_ticker,
+        (today - timedelta(days=_COUNTERPARTY_NEWS_LOOKBACK_DAYS)).isoformat(),
+        today.isoformat(),
+    )
+    if not news:
+        return None
+
+    hub_tokens = _company_tokens(hub_name)
+    hub_ticker_upper = (hub_ticker or "").upper()
+    candidates = []
+    for n in news:
+        raw_headline = n.get("headline") or ""
+        if not raw_headline or _looks_like_market_roundup(raw_headline):
+            continue
+        ticker_hit = len(hub_ticker_upper) >= 3 and re.search(
+            r"\b" + re.escape(hub_ticker_upper) + r"\b", raw_headline,
+        )
+        name_hit = hub_tokens and all(
+            re.search(r"\b" + re.escape(tok) + r"\b", raw_headline, re.IGNORECASE)
+            for tok in hub_tokens
+        )
+        if ticker_hit or name_hit:
+            candidates.append(n)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda n: n.get("datetime") or 0)
