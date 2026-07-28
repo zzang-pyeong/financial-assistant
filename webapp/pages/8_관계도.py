@@ -8,7 +8,9 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.page_helpers import (
+    require_analysis, inject_base_styles, render_wordmark, render_ticker_header, render_info_cards,
+)
 from lib._shared_core.search import render_sidebar
 from lib._shared_core.charts import (
     render_relationship_graph_figure, group_relationship_edges, direction_label,
@@ -215,10 +217,11 @@ kpi_core_cps = {_cp_key(e) for e in core_edges_all}
 kpi_ownership_count = sum(1 for e in core_edges_all if e["relationship_type"] == "지분 투자·보유")
 kpi_deal_count = sum(1 for e in core_edges_all if e["relationship_type"] in _DEAL_TYPES)
 
-kpi1, kpi2, kpi3 = st.columns(3)
-kpi1.metric("핵심 관계 상대기업", f"{len(kpi_core_cps)}개")
-kpi2.metric("지분 보유", f"{kpi_ownership_count}건")
-kpi3.metric("M&A·계약·제휴", f"{kpi_deal_count}건")
+render_info_cards([
+    ("핵심 관계 상대기업", f"{len(kpi_core_cps)}개"),
+    ("지분 보유", f"{kpi_ownership_count}건"),
+    ("M&A·계약·제휴", f"{kpi_deal_count}건"),
+])
 
 def _looks_like_ticker(s):
     """13D/13G 보고자는 실제 티커가 없으면 그룹 키가 회사명 전체로 대체된다

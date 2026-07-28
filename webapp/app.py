@@ -7,7 +7,9 @@ import streamlit as st
 sys.path.append(str(Path(__file__).parent))
 
 from lib._shared_core.peers import format_pct
-from lib._shared_core.page_helpers import inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.page_helpers import (
+    inject_base_styles, render_wordmark, render_ticker_header, render_info_cards,
+)
 from lib._shared_core.search import fetch_and_store_ticker, render_sidebar
 
 if "step" not in st.session_state:
@@ -41,23 +43,6 @@ def _find_ceo(officers):
     return None
 
 
-def _info_card(label, value, sub=None):
-    """st.metric은 값이 조금만 길어도 말줄임표로 잘라버려서(예: TSLA 시가총액 "$1,193.6..."),
-    직접 HTML 카드로 그린다 — flex-wrap이라 좁은 화면에선 줄바꿈되고, 값 자체도
-    word-break로 안전하게 감싸 잘리지 않는다."""
-    sub_html = (
-        f"<div style='font-size:0.75rem; color:#9ca3af; margin-top:0.25rem;'>{sub}</div>"
-        if sub else ""
-    )
-    return (
-        "<div style='flex:1 1 150px; min-width:150px; padding:0.9rem 1.1rem; "
-        "border:1px solid #e5e7eb; border-radius:12px; background:#fafbfc;'>"
-        f"<div style='font-size:0.8rem; color:#6b7280; margin-bottom:0.35rem;'>{label}</div>"
-        f"<div style='font-size:1.4rem; font-weight:700; color:#111827; line-height:1.25; "
-        f"word-break:break-word;'>{value}</div>{sub_html}</div>"
-    )
-
-
 def render_company_intro(ticker, info):
     """검색 직후 첫 화면 — Conflict Board를 걷어내고 그 자리를 대신한다(2026-07-28).
     다 아는 회사(AAPL/NVDA 등)도 직원 수·배당정책·CEO 이름 같은 건 의외로 모르는 경우가
@@ -83,16 +68,12 @@ def render_company_intro(ticker, info):
         if isinstance(first_trade_ms, (int, float)) else "N/A"
     )
 
-    cards = "".join([
-        _info_card("시가총액", _money(info.get("marketCap"))),
-        _info_card("직원 수", employees_str),
-        _info_card(div_label, div_value, div_sub),
-        _info_card("상장일", listed),
+    render_info_cards([
+        ("시가총액", _money(info.get("marketCap"))),
+        ("직원 수", employees_str),
+        (div_label, div_value, div_sub),
+        ("상장일", listed),
     ])
-    st.markdown(
-        f"<div style='display:flex; flex-wrap:wrap; gap:0.9rem; margin:1.4rem 0 1.6rem 0;'>{cards}</div>",
-        unsafe_allow_html=True,
-    )
 
     hq = ", ".join(p for p in [info.get("city"), info.get("state"), info.get("country")] if p)
     ceo = _find_ceo(info.get("companyOfficers"))

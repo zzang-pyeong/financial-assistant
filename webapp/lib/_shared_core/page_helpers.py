@@ -68,6 +68,40 @@ def render_ticker_header(ticker, suffix=None):
     )
 
 
+def render_info_cards(cards):
+    """label/value(/sub/delta) 카드 그리드. st.metric은 값이 조금만 길어도 말줄임표로
+    잘라버려서(실측: TSLA 시가총액 "$1,193.6...", 날짜 "2026-07-...") 대신 직접 HTML로
+    그린다 — flex-wrap이라 좁은 화면에선 자동 줄바꿈되고, 값도 word-break로 감싸 잘리지
+    않는다. cards: [(label, value), (label, value, sub), (label, value, sub, delta), ...].
+    delta는 이 앱 규칙(색상으로 유불리 암시 안 함)에 맞춰 색 없이 +/- 기호로만 방향 표시."""
+    def _card(item):
+        label, value = item[0], item[1]
+        sub = item[2] if len(item) > 2 else None
+        delta = item[3] if len(item) > 3 else None
+        sub_html = (
+            f"<div style='font-size:0.75rem; color:#9ca3af; margin-top:0.25rem;'>{sub}</div>"
+            if sub else ""
+        )
+        delta_html = (
+            f"<div style='font-size:0.85rem; color:#4b5563; margin-top:0.3rem;'>{delta}</div>"
+            if delta else ""
+        )
+        return (
+            "<div style='flex:1 1 150px; min-width:150px; padding:0.9rem 1.1rem; "
+            "border:1px solid #e5e7eb; border-radius:12px; background:#fafbfc;'>"
+            f"<div style='font-size:0.8rem; color:#6b7280; margin-bottom:0.35rem; "
+            f"word-break:break-word;'>{label}</div>"
+            f"<div style='font-size:1.4rem; font-weight:700; color:#111827; line-height:1.25; "
+            f"word-break:break-word;'>{value}</div>{sub_html}{delta_html}</div>"
+        )
+
+    html = "".join(_card(c) for c in cards)
+    st.markdown(
+        f"<div style='display:flex; flex-wrap:wrap; gap:0.9rem; margin:0.6rem 0 1.2rem 0;'>{html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def require_analysis():
     """상세 데이터 하위 페이지: 아직 조회 전이면 메인 페이지로 안내하고 중단."""
     if "peer_data" not in st.session_state:

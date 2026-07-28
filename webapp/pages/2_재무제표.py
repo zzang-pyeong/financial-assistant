@@ -11,7 +11,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 from lib._shared_core import data
 from lib.page2_only_financials import financials
 from lib._shared_core.charts import render_bar_chart_figure, STATIC_PLOTLY_CONFIG
-from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.page_helpers import (
+    require_analysis, inject_base_styles, render_wordmark, render_ticker_header, render_info_cards,
+)
 from lib._shared_core.search import render_sidebar
 
 st.set_page_config(page_title="Financial Statements — EnterTicker", layout="wide")
@@ -74,6 +76,8 @@ periods = sorted(revenue.keys(), reverse=True)
 def _money(v):
     if not isinstance(v, (int, float)):
         return "N/A"
+    if abs(v) >= 1e12:
+        return f"${v/1e12:,.2f}T"
     return f"${v/1e9:,.2f}B"
 
 
@@ -133,51 +137,45 @@ st.caption(f"증감률은 {delta_note} · 색상 없이 방향·크기만 표시
 
 with st.container(border=True):
     st.caption("📈 손익")
-    row1 = st.columns(4)
-    row1[0].metric(
-        "매출", _money(revenue.get(selected)),
-        delta=_delta_money_pct(revenue.get(selected), (revenue or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
-    row1[1].metric(
-        "매출총이익률", _pct((gross_margin or {}).get(selected)),
-        delta=_delta_pp((gross_margin or {}).get(selected), (gross_margin or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
-    row1[2].metric(
-        "영업이익률", _pct((operating_margin or {}).get(selected)),
-        delta=_delta_pp((operating_margin or {}).get(selected), (operating_margin or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
-    row1[3].metric(
-        "순이익", _money((net_income or {}).get(selected)),
-        delta=_delta_money_pct((net_income or {}).get(selected), (net_income or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
+    render_info_cards([
+        (
+            "매출", _money(revenue.get(selected)), None,
+            _delta_money_pct(revenue.get(selected), (revenue or {}).get(prev_period)) if prev_period else None,
+        ),
+        (
+            "매출총이익률", _pct((gross_margin or {}).get(selected)), None,
+            _delta_pp((gross_margin or {}).get(selected), (gross_margin or {}).get(prev_period)) if prev_period else None,
+        ),
+        (
+            "영업이익률", _pct((operating_margin or {}).get(selected)), None,
+            _delta_pp((operating_margin or {}).get(selected), (operating_margin or {}).get(prev_period)) if prev_period else None,
+        ),
+        (
+            "순이익", _money((net_income or {}).get(selected)), None,
+            _delta_money_pct((net_income or {}).get(selected), (net_income or {}).get(prev_period)) if prev_period else None,
+        ),
+    ])
 
 with st.container(border=True):
     st.caption("💰 현금흐름")
-    row2 = st.columns(4)
-    row2[0].metric(
-        "CapEx", _money((capex or {}).get(selected)),
-        delta=_delta_money_pct((capex or {}).get(selected), (capex or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
-    row2[1].metric(
-        "영업현금흐름(OCF)", _money((ocf or {}).get(selected)),
-        delta=_delta_money_pct((ocf or {}).get(selected), (ocf or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
-    row2[2].metric(
-        "잉여현금흐름(FCF)", _money((fcf or {}).get(selected)),
-        delta=_delta_money_pct((fcf or {}).get(selected), (fcf or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
-    row2[3].metric(
-        "CapEx / 매출", _pct((capex_pct or {}).get(selected)),
-        delta=_delta_pp((capex_pct or {}).get(selected), (capex_pct or {}).get(prev_period)) if prev_period else None,
-        delta_color="off",
-    )
+    render_info_cards([
+        (
+            "CapEx", _money((capex or {}).get(selected)), None,
+            _delta_money_pct((capex or {}).get(selected), (capex or {}).get(prev_period)) if prev_period else None,
+        ),
+        (
+            "영업현금흐름(OCF)", _money((ocf or {}).get(selected)), None,
+            _delta_money_pct((ocf or {}).get(selected), (ocf or {}).get(prev_period)) if prev_period else None,
+        ),
+        (
+            "잉여현금흐름(FCF)", _money((fcf or {}).get(selected)), None,
+            _delta_money_pct((fcf or {}).get(selected), (fcf or {}).get(prev_period)) if prev_period else None,
+        ),
+        (
+            "CapEx / 매출", _pct((capex_pct or {}).get(selected)), None,
+            _delta_pp((capex_pct or {}).get(selected), (capex_pct or {}).get(prev_period)) if prev_period else None,
+        ),
+    ])
 
 # --- 추이 -----------------------------------------------------------------------
 st.subheader(f"추이 ({'분기별' if is_quarterly else '연도별'})")

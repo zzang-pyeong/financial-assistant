@@ -11,6 +11,7 @@ from lib._shared_core.translate import to_korean, prefetch_korean
 from lib._shared_core.config import ANALYST_NEWS_LOOKBACK_DAYS, ANALYST_NEWS_DISPLAY_LIMIT
 from lib._shared_core.page_helpers import (
     require_analysis, news_date_str, inject_base_styles, render_wordmark, render_ticker_header,
+    render_info_cards,
 )
 from lib._shared_core.search import render_sidebar
 
@@ -31,11 +32,12 @@ st.divider()
 analyst_trend = st.session_state.get("analyst_trend")
 if analyst_trend:
     st.subheader("애널리스트 투자의견 분포")
-    cols = st.columns(4)
-    cols[0].metric("매수", analyst_trend["strongBuy"] + analyst_trend["buy"])
-    cols[1].metric("보유", analyst_trend["hold"])
-    cols[2].metric("매도", analyst_trend["strongSell"] + analyst_trend["sell"])
-    cols[3].metric("기준 시점", analyst_trend["period"] or "—")
+    render_info_cards([
+        ("매수", analyst_trend["strongBuy"] + analyst_trend["buy"]),
+        ("보유", analyst_trend["hold"]),
+        ("매도", analyst_trend["strongSell"] + analyst_trend["sell"]),
+        ("기준 시점", analyst_trend["period"] or "—"),
+    ])
     st.divider()
 
 def _date_str(epoch):
@@ -82,15 +84,17 @@ if price_target:
     info = st.session_state.info
     current_price = info.get("currentPrice") or info.get("regularMarketPrice")
     st.subheader("목표주가")
-    cols = st.columns(4)
-    cols[0].metric("평균", f"${price_target['mean']:.2f}" if price_target.get("mean") is not None else "—")
-    cols[1].metric("최고", f"${price_target['high']:.2f}" if price_target.get("high") is not None else "—")
-    cols[2].metric("최저", f"${price_target['low']:.2f}" if price_target.get("low") is not None else "—")
     if current_price and price_target.get("mean"):
         upside = (price_target["mean"] / current_price - 1) * 100
-        cols[3].metric("현재가 대비", f"{upside:+.1f}%", help=f"현재가 ${current_price:.2f} 기준")
+        upside_value, upside_sub = f"{upside:+.1f}%", f"현재가 ${current_price:.2f} 기준"
     else:
-        cols[3].metric("현재가 대비", "—")
+        upside_value, upside_sub = "—", None
+    render_info_cards([
+        ("평균", f"${price_target['mean']:.2f}" if price_target.get("mean") is not None else "—"),
+        ("최고", f"${price_target['high']:.2f}" if price_target.get("high") is not None else "—"),
+        ("최저", f"${price_target['low']:.2f}" if price_target.get("low") is not None else "—"),
+        ("현재가 대비", upside_value, upside_sub),
+    ])
     st.caption(f"⚠️ 애널리스트 목표주가는 예측일 뿐 확정된 가격이 아닙니다 — 출처: {price_target['source']}.")
     st.divider()
 
