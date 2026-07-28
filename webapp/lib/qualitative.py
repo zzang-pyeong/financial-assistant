@@ -63,7 +63,10 @@ _NAME_SUFFIXES = {
     "semiconductor", "semiconductors", "connectivity", "technology", "technologies",
     "systems", "solutions", "networks", "networking", "electronics", "electric",
     "industries", "international", "global", "worldwide", "enterprises", "software",
-    "communications", "sciences", "labs", "laboratories",
+    "communications", "sciences", "labs", "laboratories", "materials",
+    # "materials"만 남는 "MP Materials Corp." 실측 오탐 — AMAT("Applied Materials") 관련
+    # 뉴스는 검색 대상 회사명 자체에 "Materials"가 들어있어 그 단어가 포함된 헤드라인이면
+    # 뭐든(TSMC 계약 뉴스든) MP Materials와 오매칭됐다(사용자 피드백).
 }
 
 
