@@ -35,6 +35,22 @@ def _date_str(epoch):
         return ""
 
 
+def _price_at(df, epoch):
+    """df(일봉 가격 이력)에서 epoch 시점 또는 그 직전 마지막 거래일 종가를 찾는다.
+    df가 2024-01-01부터라(lib/search.py) 그보다 오래된 등급 변경은 못 찾아 None —
+    값을 지어내지 않고 빈 칸으로 둔다."""
+    if not epoch or df is None or df.empty:
+        return None
+    try:
+        ts = pd.Timestamp(datetime.fromtimestamp(epoch).date())
+        pos = df.index.asof(ts)
+        if pd.isna(pos):
+            return None
+        return float(df.loc[pos, "Close"])
+    except Exception:
+        return None
+
+
 # --- 목표주가 --------------------------------------------------------------
 price_target = st.session_state.get("price_target")
 if price_target:
@@ -56,6 +72,7 @@ if price_target:
 # --- 최근 상향/하향 이력 -----------------------------------------------------
 analyst_actions = st.session_state.get("analyst_actions", [])
 if analyst_actions:
+    price_df = st.session_state.get("df")
     st.subheader("최근 상향/하향 이력")
     st.dataframe(
         pd.DataFrame([{
@@ -64,12 +81,19 @@ if analyst_actions:
             "증권사 규모": a["broker_tier"],
             "변경": a["action_label"],
             "등급": (f"{a['from_grade']} → {a['to_grade']}" if a["from_grade"] else a["to_grade"]),
+            "당시 주가": (
+                f"${p:.2f}" if (p := _price_at(price_df, a["date"])) is not None else ""
+            ),
+            "제시 목표주가": (
+                f"${a['price_target']:.2f}" if a.get("price_target") is not None else ""
+            ),
         } for a in analyst_actions]),
         hide_index=True, use_container_width=True,
     )
     st.caption(
         f"출처: {analyst_actions[0]['source']}. ⚠️ '증권사 규모'는 이름 인지도 기준 근사치일 "
-        "뿐 실제 리서치 적중률·트랙레코드가 아닙니다 — 대형 IB라고 항상 더 정확한 것은 아닙니다."
+        "뿐 실제 리서치 적중률·트랙레코드가 아닙니다 — 대형 IB라고 항상 더 정확한 것은 아닙니다. "
+        "'제시 목표주가'는 Finnhub 소스에서는 제공되지 않아 비어있을 수 있습니다."
     )
     st.divider()
 

@@ -434,12 +434,12 @@ _BULGE_BRACKET_KEYWORDS = [
 
 
 def classify_broker_tier(firm_name):
-    """firm_name이 대형 글로벌 IB 이름과 겹치면 "대형 IB", 아니면 "중소형·부티크(추정)".
+    """firm_name이 대형 글로벌 IB 이름과 겹치면 "대형 IB", 아니면 "중소형".
     규모·인지도 근사치일 뿐 실제 리서치 정확도와는 무관하다."""
     name_l = (firm_name or "").lower()
     if any(kw in name_l for kw in _BULGE_BRACKET_KEYWORDS):
         return "대형 IB"
-    return "중소형·부티크(추정)"
+    return "중소형"
 
 
 def summarize_price_target(finnhub_pt, yf_pt):
@@ -474,7 +474,9 @@ def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
                 "date": r.get("gradeTime"), "firm": r.get("company"),
                 "from_grade": r.get("fromGrade") or "", "to_grade": r.get("toGrade") or "",
                 "action_label": _action_label(r.get("action")),
-                "broker_tier": classify_broker_tier(r.get("company")), "source": "Finnhub",
+                "broker_tier": classify_broker_tier(r.get("company")),
+                # Finnhub upgrade-downgrade 응답에는 목표주가 필드가 없다 — 지어내지 않고 None.
+                "price_target": None, "source": "Finnhub",
             })
     elif yf_rows:
         for r in yf_rows:
@@ -482,7 +484,8 @@ def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
                 "date": r.get("date"), "firm": r.get("firm"),
                 "from_grade": r.get("from_grade") or "", "to_grade": r.get("to_grade") or "",
                 "action_label": _action_label(r.get("action")),
-                "broker_tier": classify_broker_tier(r.get("firm")), "source": "Yahoo Finance",
+                "broker_tier": classify_broker_tier(r.get("firm")),
+                "price_target": r.get("price_target"), "source": "Yahoo Finance",
             })
     rows.sort(key=lambda r: r["date"] or 0, reverse=True)
     return rows[:limit]

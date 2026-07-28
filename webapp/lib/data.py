@@ -233,10 +233,13 @@ def get_yf_upgrades_downgrades(ticker):
                 epoch = int(grade_date.timestamp())
             except Exception:
                 epoch = None
+            pt = row.get("currentPriceTarget")
             rows.append({
                 "date": epoch, "firm": row.get("Firm"),
                 "from_grade": row.get("FromGrade"), "to_grade": row.get("ToGrade"),
                 "action": row.get("Action"),
+                # NaN != NaN — pandas가 값 없을 때 NaN을 주므로 이 트릭으로 걸러낸다.
+                "price_target": float(pt) if isinstance(pt, (int, float)) and pt == pt else None,
             })
         return rows
     except Exception:
