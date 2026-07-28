@@ -41,7 +41,7 @@ st.write(f"대상 종목 Forward PE: **{fwd_pe:.1f}**" if isinstance(fwd_pe, (in
 if peer_data["dict_name"]:
     st.caption(f"자동 판별된 섹터 키워드 그룹: {peer_data['dict_name']} ({', '.join(peer_data['target_matches'])})")
 else:
-    st.caption("니치 키워드 미검출 — 동일 산업/섹터(시총밴드) 기준으로 Tier1을 판정합니다")
+    st.caption('')
 
 stats = tier1_stats(peer_data["peers"])
 if stats:
@@ -51,7 +51,7 @@ if stats:
         st.write(f"→ 대상 종목은 Tier1 평균의 **{fwd_pe/stats['mean']:.1f}배**")
 else:
     st.caption("Tier1 유효 forward PE 표본 없음")
-st.caption("⚠️ PER은 적자 섹터에서 무력화됨(실증 확인) — EV/Revenue·유동성·런웨이를 함께 참고하세요")
+st.caption('')
 
 target_health = st.session_state.target_health
 with st.expander(f"{ticker} 재무 건전성 (Peer 비교 보완)", expanded=True):
@@ -59,8 +59,7 @@ with st.expander(f"{ticker} 재무 건전성 (Peer 비교 보완)", expanded=Tru
     if comment:
         st.info(f"🧾 {comment}")
         st.caption(
-            "위 문장은 아래 개별 지표를 성장성→수익성→유동성 순으로 그대로 재구성한 것 — "
-            "저평가/위험 등 새로운 판단을 추가하지 않습니다."
+           ''
         )
     ev_str = f"{target_health['ev_revenue']:.1f}" if isinstance(target_health['ev_revenue'], (int, float)) else "N/A"
     qr = target_health['quick_ratio']
