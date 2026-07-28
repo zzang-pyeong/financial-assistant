@@ -6,14 +6,14 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.peers import (
+from lib._shared_core.peers import (
     tier1_stats, runway_interpretation, quick_ratio_interpretation, roe_interpretation,
     current_ratio_interpretation, format_pct, ev_ebitda_interpretation,
     financial_characteristics_comment,
 )
-from lib.glossary import render_glossary
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
-from lib.search import render_sidebar
+from lib._shared_core.glossary import render_glossary
+from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.search import render_sidebar
 
 _BASIS_KO = {
     "same industry": "동일 산업",

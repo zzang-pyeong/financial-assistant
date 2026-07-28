@@ -4,25 +4,25 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-from lib.data import (
+from lib._shared_core.data import (
     get_price_history, get_yf_info, get_yf_calendar, get_finnhub_recommendation_trends,
     get_finnhub_company_news, resolve_ticker,
     get_finnhub_price_target, get_finnhub_upgrade_downgrade,
     get_yf_analyst_price_targets, get_yf_upgrades_downgrades,
 )
-from lib.indicators import compute_indicators, classify_indicator_signals
-from lib.peers import classify_peers, get_financial_health
-from lib.ownership import (
+from lib._shared_core.indicators import compute_indicators, classify_indicator_signals
+from lib._shared_core.peers import classify_peers, get_financial_health
+from lib._shared_core.ownership import (
     get_ownership_summary,
 )
-from lib.qualitative import (
+from lib._shared_core.qualitative import (
     classify_news_tone, news_tone_summary, classify_analyst_trend,
     filter_analyst_related_news, filter_corporate_event_news, match_counterparties,
     summarize_price_target, normalize_upgrade_downgrade,
 )
-from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS, BOARD_NEWS_LIMIT
-from lib.known_companies import STATIC_KNOWN_COMPANIES
-from lib.translate import prefetch_korean
+from lib._shared_core.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS, BOARD_NEWS_LIMIT
+from lib._shared_core.known_companies import STATIC_KNOWN_COMPANIES
+from lib._shared_core.translate import prefetch_korean
 
 MAX_SEARCH_HISTORY = 30
 

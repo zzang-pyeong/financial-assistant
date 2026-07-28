@@ -8,15 +8,16 @@ from io import BytesIO
 sys.path.insert(0, "webapp")
 from PIL import Image, ImageDraw
 
-# lib.data는 FinanceDataReader를 import하는데, 이 검증 환경에서는 그 패키지의 pyOpenSSL
-# 의존성이 깨져 있다(우리 코드와 무관한 환경 문제). 로고 크롭 검증에 Finnhub 조회는
-# 필요 없으므로 lib.data를 스텁으로 갈아끼워 lib.logos만 떼어내 테스트한다.
+# lib._shared_core.data는 FinanceDataReader를 import하는데, 이 검증 환경에서는 그 패키지의
+# pyOpenSSL 의존성이 깨져 있다(우리 코드와 무관한 환경 문제). 로고 크롭 검증에 Finnhub 조회는
+# 필요 없으므로 lib._shared_core.data를 스텁으로 갈아끼워 lib.page8_only_relationship.logos만
+# 떼어내 테스트한다.
 import types
-_stub = types.ModuleType("lib.data")
+_stub = types.ModuleType("lib._shared_core.data")
 _stub.get_company_logo_url = lambda ticker: None
-sys.modules["lib.data"] = _stub
+sys.modules["lib._shared_core.data"] = _stub
 
-from lib import logos as L
+from lib.page8_only_relationship import logos as L
 
 
 def make_png(w, h, color=(200, 30, 30, 255), transparent_bg=False):
@@ -87,7 +88,7 @@ assert kb < 60, f"data URI가 너무 큼: {kb:.1f}KB"
 print(f"7) data URI 크기 {kb:.1f}KB — 노드 10개면 약 {kb*10:.0f}KB")
 
 # --- 8) 그래프에 꽂았을 때 원을 채우는지 -----------------------------------------------
-from lib.charts import (
+from lib._shared_core.charts import (
     render_relationship_graph_figure, _NODE_RADIUS, _LOGO_FIT_CIRCULAR, _LOGO_FIT_SQUARE,
 )
 

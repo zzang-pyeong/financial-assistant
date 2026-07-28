@@ -7,12 +7,12 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent))
 
-from lib.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
-from lib.translate import to_korean
-from lib.page_helpers import inject_base_styles, render_wordmark, news_date_str
-from lib.search import fetch_and_store_ticker, render_sidebar
-from lib.config import BOARD_NEWS_LIMIT
-from lib.charts import render_price_chart_figure, PERIOD_OPTIONS, PLOTLY_CONFIG
+from lib._shared_core.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
+from lib._shared_core.translate import to_korean
+from lib._shared_core.page_helpers import inject_base_styles, render_wordmark, news_date_str
+from lib._shared_core.search import fetch_and_store_ticker, render_sidebar
+from lib._shared_core.config import BOARD_NEWS_LIMIT
+from lib._shared_core.charts import render_price_chart_figure, PERIOD_OPTIONS, PLOTLY_CONFIG
 
 if "step" not in st.session_state:
     st.session_state.step = "search"

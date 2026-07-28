@@ -3,7 +3,7 @@ _translate_one을 가짜로 갈아끼워 '몇 번 호출됐는지'만 센다."""
 import sys, threading, time
 sys.path.insert(0, "webapp")
 
-from lib import translate
+from lib._shared_core import translate
 
 _REAL_TRANSLATE_ONE = translate._translate_one   # 폴백 테스트에서 되돌리려고 원본 보관
 

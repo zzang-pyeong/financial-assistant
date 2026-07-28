@@ -8,7 +8,8 @@ CapEx 스토리가 뚜렷한 회사(NVDA, MU)와 자산경량형 회사(CRM)를 
 import sys
 sys.path.insert(0, "webapp")
 
-from lib import data, financials
+from lib._shared_core import data
+from lib.page2_only_financials import financials
 
 TICKERS = ["NVDA", "MU", "CRM"]
 

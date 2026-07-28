@@ -12,7 +12,7 @@
 import sys
 sys.path.insert(0, "webapp")
 
-from lib import sec_filings, filing_text
+from lib._shared_page2_page8_filings import sec_filings, filing_text
 
 # --- 가짜 10-K 만들기: 앞쪽 200KB 잡동사니 → 계약 문단 → 뒤쪽 6MB 부록 -------------
 FILLER_HEAD = "<p>Item 1A. Risk Factors. " + ("Boilerplate language about market conditions. " * 4000) + "</p>"

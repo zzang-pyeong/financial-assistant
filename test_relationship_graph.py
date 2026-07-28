@@ -5,7 +5,7 @@ import math
 import sys
 sys.path.insert(0, "webapp")
 
-from lib.charts import (
+from lib._shared_core.charts import (
     group_relationship_edges, render_relationship_graph_figure,
     _node_positions, _RING_CAPACITY,
 )
@@ -106,7 +106,7 @@ print("8) 노드 1개 경계 케이스 OK")
 print("\n전부 통과")
 
 # --- 9) 로고 렌더링 (2026-07-27 추가) ------------------------------------------------
-from lib.charts import _NODE_RADIUS, _HUB_RADIUS, _edge_endpoints
+from lib._shared_core.charts import _NODE_RADIUS, _HUB_RADIUS, _edge_endpoints
 
 # 이제 상대기업을 상위 N개로 자르지 않고 전부 그리므로, CP00~CP14 15개 모두에 로고를 줄
 # 수 있다. 그래프에 전혀 없는 티커(ZZZZ)의 로고를 같이 넘겨도 무시되는지가 확인 대상.
@@ -157,7 +157,7 @@ print("13) 로고 없을 때 폴백(빈 원) OK — 이미지 0개, 원은 그�
 print("\n로고 관련 전부 통과")
 
 # --- 14) hover 줄바꿈 + 조작 비활성화 (2026-07-27, 실제 스크린샷 이슈) --------------------
-from lib.charts import _wrap_hover, _display_width, _HOVER_WIDTH, STATIC_PLOTLY_CONFIG
+from lib._shared_core.charts import _wrap_hover, _display_width, _HOVER_WIDTH, STATIC_PLOTLY_CONFIG
 
 # 사용자 스크린샷에서 잘려 나온 실제 유형의 문장(공시 발췌문, 공백은 있지만 아주 긴 한 줄)
 long_line = ("…display and other products. The Display segment includes products for "
@@ -207,7 +207,7 @@ print("18) 조작 비활성화 OK — 휠확대·툴바·드래그·축확대 �
 print("\nhover/조작 관련 전부 통과")
 
 # --- 19) 섹터 클러스터링 (2026-07-27 추가, 사용자 요청: "너무 많아지면 섹터별로") -----------
-from lib.charts import cluster_by_sector, SECTOR_CLUSTER_THRESHOLD
+from lib._shared_core.charts import cluster_by_sector, SECTOR_CLUSTER_THRESHOLD
 
 # CP00~CP04는 Tech, CP05~CP09는 Finance, 나머지(CP10~CP14)는 섹터 정보 없음으로 구성 —
 # 원래 정렬(근거 수 내림차순)과 섹터 경계가 어긋나게 일부러 뒤섞은 배치다.

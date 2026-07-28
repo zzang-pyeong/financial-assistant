@@ -22,11 +22,11 @@ from datetime import date, datetime, timedelta
 import requests
 import streamlit as st
 
-from .data import get_finnhub_company_news
-from .filing_text import stream_find_context
-from .page_helpers import news_date_str
-from .qualitative import is_relevant
-from .sec_filings import _list_filing_documents, get_cik
+from lib._shared_core.data import get_finnhub_company_news
+from lib._shared_page2_page8_filings.filing_text import stream_find_context
+from lib._shared_core.page_helpers import news_date_str
+from lib._shared_core.qualitative import is_relevant
+from lib._shared_page2_page8_filings.sec_filings import _list_filing_documents, get_cik
 
 _USER_AGENT = "EnterTicker research contact@example.com"
 

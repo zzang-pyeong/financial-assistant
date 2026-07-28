@@ -8,21 +8,21 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
-from lib.search import render_sidebar
-from lib.charts import (
+from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.search import render_sidebar
+from lib._shared_core.charts import (
     render_relationship_graph_figure, group_relationship_edges,
     STATIC_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
 )
-from lib.known_companies import STATIC_KNOWN_COMPANIES
-from lib.sec_filings import (
+from lib._shared_core.known_companies import STATIC_KNOWN_COMPANIES
+from lib._shared_page2_page8_filings.sec_filings import (
     find_filing_relationships, attach_context_snippets, promote_mentions_with_context,
     find_beneficial_owners,
 )
-from lib.logos import get_circular_logos
-from lib.sectors import get_sectors
-from lib.translate import to_korean, prefetch_korean
-from lib.qualitative import find_counterparty_context_news
+from lib.page8_only_relationship.logos import get_circular_logos
+from lib.page8_only_relationship.sectors import get_sectors
+from lib._shared_core.translate import to_korean, prefetch_korean
+from lib._shared_core.qualitative import find_counterparty_context_news
 
 st.set_page_config(page_title="Connection Map — EnterTicker", layout="wide")
 inject_base_styles()

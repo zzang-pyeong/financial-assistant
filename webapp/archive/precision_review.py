@@ -29,14 +29,14 @@ from datetime import date
 import numpy as np
 import streamlit as st
 
-from lib.risk import compute_stop_take_profit
-from lib.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
-from lib.translate import to_korean
-from lib.glossary import render_glossary
+from lib._legacy_unused.risk import compute_stop_take_profit
+from lib._shared_core.peers import tier1_stats, RUNWAY_RISK_MONTHS, QUICK_RATIO_RISK
+from lib._shared_core.translate import to_korean
+from lib._shared_core.glossary import render_glossary
 from lib.journal import append_entry, load_journal
-from lib.config import NEWS_LOOKBACK_DAYS
-from lib.page_helpers import news_date_str
-from lib.search import reset_session
+from lib._shared_core.config import NEWS_LOOKBACK_DAYS
+from lib._shared_core.page_helpers import news_date_str
+from lib._shared_core.search import reset_session
 
 
 def goto(step):

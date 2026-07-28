@@ -7,9 +7,9 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.data import get_option_expirations, get_option_chain
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
-from lib.search import render_sidebar
+from lib._shared_core.data import get_option_expirations, get_option_chain
+from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.search import render_sidebar
 
 st.set_page_config(page_title="Options Data — EnterTicker", layout="wide")
 inject_base_styles()

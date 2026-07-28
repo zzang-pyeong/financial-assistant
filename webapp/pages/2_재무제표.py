@@ -6,10 +6,11 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib import data, financials
-from lib.charts import render_bar_chart_figure, STATIC_PLOTLY_CONFIG
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
-from lib.search import render_sidebar
+from lib._shared_core import data
+from lib.page2_only_financials import financials
+from lib._shared_core.charts import render_bar_chart_figure, STATIC_PLOTLY_CONFIG
+from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
+from lib._shared_core.search import render_sidebar
 
 st.set_page_config(page_title="Financial Statements — EnterTicker", layout="wide")
 inject_base_styles()

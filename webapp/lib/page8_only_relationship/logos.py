@@ -21,7 +21,7 @@ from io import BytesIO
 
 import requests
 
-from .data import get_company_logo_url
+from lib._shared_core.data import get_company_logo_url
 
 # 노드는 화면에서 약 40px이라 96px이면 고해상도 화면에서도 충분하다. 더 키우면 base64
 # 문자열이 커지는데, 이 data URI는 Streamlit이 rerun마다 그림 JSON에 담아 브라우저로
