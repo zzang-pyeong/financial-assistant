@@ -11,7 +11,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from lib._shared_core.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
 from lib._shared_core.search import render_sidebar
 from lib._shared_core.charts import (
-    render_relationship_graph_figure, group_relationship_edges,
+    render_relationship_graph_figure, group_relationship_edges, direction_label,
     STATIC_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
 )
 from lib._shared_core.known_companies import STATIC_KNOWN_COMPANIES
@@ -269,13 +269,6 @@ if len({v for v in sectors.values() if v}) > 1:
     caption += " 상대기업이 많아 같은 섹터끼리 묶어서 배치했습니다."
 st.caption(caption)
 
-_DIRECTION_LABELS = {
-    "outbound": "→ (당사→상대)",
-    "inbound": "← (상대→당사)",
-    "bidirectional": "↔ 상호",
-    "unknown": "미확인",
-}
-
 # --- 상대회사 자체 뉴스로 문맥 보강 (사용자 피드백: SEC 발췌만으로는 무슨 관계인지
 # 알아내는 데 개인 노력이 든다) — 뉴스 근거가 아직 없는 상대기업 중 상위 몇 개에만, 그
 # 회사 자신의 최근 뉴스에서 허브 기업이 언급된 기사를 찾아본다. 상대기업 수만큼 API
@@ -315,7 +308,7 @@ for cp_ticker, g in grouped:
     summary_rows.append({
         "상대기업": g["name"] or cp_ticker,
         "관계 유형": ", ".join(g["types"]),
-        "방향": _DIRECTION_LABELS.get(g["direction"], "미확인"),
+        "방향": direction_label(g["direction"], g["types"][0] if g["types"] else None),
         "상태": g["latest_status"] or "",
         "지분율": f"{g['ownership_pct']:.1f}%" if g["ownership_pct"] is not None else "",
         "최근 근거일": _date_str(g["latest_dt"]),

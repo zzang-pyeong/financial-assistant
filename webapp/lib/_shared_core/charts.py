@@ -317,6 +317,72 @@ def _preview_text(headline_tuple):
     return text
 
 
+# ---------------------------------------------------------------------------
+# hover 한 줄 요약 합성 (2026-07-28 신규, 관계도 2단계) — 지금까지 hover는 원문 발췌
+# (영문, _preview_text)를 그대로 보여줘서 "무슨 관계인지"를 사용자가 직접 읽고 판단해야
+# 했다(사용자 피드백: "노드에 커서만 올려도 관계를 바로 알 수 있어야 하고, 사용자는
+# 최소한의 노력만 해야 한다"). 1단계에서 채운 direction(outbound/inbound)과 유형을
+# 조합해 한글 한 줄로 미리 합성해두고, 원문 발췌는 그 아래 보조 정보로 내린다.
+# 방향이 "unknown"이면 화살표를 안 그리는 것과 같은 원칙으로, 화살표 방향(A가 B에게)을
+# 문장으로 단정하지 않고 유형만 담백하게 말한다 — 근거 없는 확신을 만들지 않는다.
+_SUPPLY_LIKE_TYPES = {"공급·고객 계약", "전략적 제휴", "라이선싱", "합작투자"}
+
+# 방향을 못 정했을 때(unknown) 쓸 유형별 대체 문구 — "합작투자"/"전략적 제휴"라는 유형
+# 이름 그대로 쓰기보다 사용자 피드백대로 "공동개발"/"파트너십 체결"처럼 실제로 무슨 일이
+# 있었는지를 담은 자연스러운 동사구를 쓴다. JV·전략적 제휴·라이선싱은 원래 방향(누가
+# 누구에게)이라는 개념 자체가 상호적이라 없는 게 정상이므로, "미확인"이 아니라 이 문구로
+# 대체한다. 여기 없는 유형(공급·고객 계약/M&A/지분 투자·보유/공시 내 언급)은 원래 방향이
+# 있어야 하는데 못 찾은 경우라 "미확인"을 그대로 쓴다 — 못 찾았다는 사실 자체를 감추지
+# 않는다(원칙 7).
+_NON_DIRECTIONAL_LABELS = {
+    "합작투자": "공동개발",
+    "전략적 제휴": "파트너십 체결",
+    "라이선싱": "라이선스 계약",
+}
+
+
+def direction_label(direction, primary_type):
+    """direction이 outbound/inbound/bidirectional이면 화살표 문구, 아니면(unknown)
+    _NON_DIRECTIONAL_LABELS에 있는 유형은 그 담백한 한글 표현을, 없는 유형은 "미확인"을
+    반환한다. hover 합성(_synthesize_relationship_line)과 요약표의 "방향" 컬럼
+    (pages/8_관계도.py)이 같은 문구를 쓰도록 여기 한 곳에만 둔다."""
+    if direction == "outbound":
+        return "→ (당사→상대)"
+    if direction == "inbound":
+        return "← (상대→당사)"
+    if direction == "bidirectional":
+        return "↔ 상호"
+    return _NON_DIRECTIONAL_LABELS.get(primary_type, "미확인")
+
+
+def _synthesize_relationship_line(hub_ticker, cp_ticker_or_name, primary_type, direction, ownership_pct):
+    """(허브 티커, 상대 표시명, 대표 관계유형, 방향, 지분율)로 한글 한 줄 요약을 만든다.
+    방향이 뚜렷할 때만 "A → B" 화살표 문구를 쓰고, 모호하면 direction_label()의 유형별
+    담백한 문구(또는 유형 이름)를 반환 — 근거 등급·문맥 없이 방향을 지어내지 않는다는
+    원칙(원칙 7)을 hover 문구에도 그대로 적용."""
+    cp = cp_ticker_or_name
+    if primary_type == "지분 투자·보유":
+        pct = f" {ownership_pct:.1f}%" if ownership_pct is not None else ""
+        if direction == "inbound":
+            return f"{cp}가 {hub_ticker} 지분{pct} 보유"
+        if direction == "outbound":
+            return f"{hub_ticker}가 {cp} 지분{pct} 보유"
+        return f"지분 투자·보유{pct}"
+    if primary_type == "M&A":
+        if direction == "outbound":
+            return f"{hub_ticker} → {cp} M&A(인수 측)"
+        if direction == "inbound":
+            return f"{cp} → {hub_ticker} M&A(피인수 측)"
+        return "M&A"
+    if primary_type in _SUPPLY_LIKE_TYPES:
+        if direction == "outbound":
+            return f"{hub_ticker} → {cp} 공급 ({primary_type})"
+        if direction == "inbound":
+            return f"{cp} → {hub_ticker} 공급 ({primary_type})"
+        return direction_label(direction, primary_type)
+    return primary_type or "공시 내 언급"
+
+
 def group_relationship_edges(edges):
     """엣지 목록을 상대 회사 단위로 묶어 (티커, 정보) 리스트를 근거 수·최신순으로 정렬해
     반환한다. 그래프(상위 N개만)와 그래프 아래 근거 표(전체)가 **같은 그룹핑·같은 정렬**을
@@ -553,10 +619,17 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, se
             f"뉴스 {g['news_count']}건" if g["news_count"] else "",
             f"공시 {g['filing_count']}건" if g["filing_count"] else "",
         ]))
+        # 합성 한 줄 요약을 맨 위에 굵게 — 사용자가 이 한 줄만 읽어도 관계 종류·방향을
+        # 알 수 있게 하는 게 목적(2단계). 원문 발췌(headlines_preview)는 "그 아래 검증용
+        # 근거"로 내려서, 굳이 영문 원문을 읽지 않아도 hover 첫 줄에서 판단이 끝나게 한다.
+        synth_line = _synthesize_relationship_line(
+            hub_ticker, ticker, primary_type, g.get("direction", "unknown"), g.get("ownership_pct"),
+        )
         hover_text.append(_wrap_hover(
-            f"<b>{g['name'] or ticker}</b> ({ticker})<br>{', '.join(g['types'])}"
-            f" · 최신 상태: {g['latest_status']}<br>근거: {source_str}"
-            f"<br><br>{headlines_preview}<br><br><i>원문 링크와 전체 근거는 아래 표에 있습니다</i>"
+            f"<b>{g['name'] or ticker}</b> ({ticker})<br><b>{synth_line}</b>"
+            f"<br>최신 상태: {g['latest_status']} · 근거: {source_str}"
+            f"<br><br>근거 원문: {headlines_preview}"
+            f"<br><br><i>원문 링크와 전체 근거는 아래 표에 있습니다</i>"
         ))
 
     # 원은 shape으로 그렸으므로, 이 trace는 (1) 라벨 (2) hover 판정 영역 역할만 한다.

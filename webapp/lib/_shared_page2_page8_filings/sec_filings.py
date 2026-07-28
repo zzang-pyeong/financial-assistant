@@ -266,10 +266,10 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
             futures[future] = ("reverse", cp_ticker, cp_name, cp_cik)
 
         for future in as_completed(futures):
-            direction, cp_ticker, cp_name, doc_cik = futures[future]
+            search_direction, cp_ticker, cp_name, doc_cik = futures[future]
             hits, ambiguous = future.result()
 
-            if direction == "forward":
+            if search_direction == "forward":
                 evidence_level = "공시 자료 (SEC EDGAR, 공식 문서)"
                 snippet_name = cp_name
             else:
@@ -279,7 +279,7 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
                 evidence_level = "⚠️ 흔한 단어 검색이라 오탐 가능 · " + evidence_level
 
             for hit in hits:
-                if direction == "forward":
+                if search_direction == "forward":
                     headline = f"{hit['form']} ({hit['file_date']}) 공시에 '{cp_name}' 언급"
                 else:
                     headline = f"{cp_name}의 {hit['form']} ({hit['file_date']}) 공시에 '{target_name}' 언급"
@@ -296,6 +296,11 @@ def find_filing_relationships(target_ticker, target_name, known_companies, on_pr
                     "url": _filing_url(doc_cik, hit),
                     "datetime": _file_date_to_epoch(hit["file_date"]),
                     "snippet_query_name": snippet_name,
+                    # "forward"=이 문맥은 허브(target) 자신의 공시, "reverse"=상대 회사
+                    # 자신의 공시 — 나중에 문맥에서 방향(공급자/고객 언어)을 판정할 때
+                    # "누가 말하는 문장인지"를 알아야 허브 기준 방향으로 뒤집을 수 있다
+                    # (아래 infer_relationship_direction 참고).
+                    "search_direction": search_direction,
                     "ownership_pct": None,
                     "transaction_value": None,
                     "extraction_method": "mention",
@@ -681,6 +686,15 @@ def attach_context_snippets(filing_edges, max_companies=_MAX_SNIPPET_COMPANIES):
 # ---------------------------------------------------------------------------
 _PROMOTION_TYPE_KEYWORDS = {
     "합작투자": re.compile(r"joint venture", re.IGNORECASE),
+    # M&A는 "acquisition/merger" 문구가 있어도 그 뒤 문장에 customer/vendor 같은 일반
+    # 거래 단어가 같이 나오는 경우가 흔해서(예: 피인수회사의 매출·고객 설명), M&A 판정을
+    # 공급·고객 계약보다 먼저 검사해야 오분류를 막는다(실측: "completed the acquisition
+    # of..."가 M&A 대신 공급·고객 계약으로 잘못 승격되던 문제).
+    "M&A": re.compile(
+        r"\bmerger\b|\bacqui(?:re|res|red|ring|sition)\w*\b|\btender offer\b|"
+        r"\bbusiness combination\b",
+        re.IGNORECASE,
+    ),
     "라이선싱": re.compile(r"licens\w*\s+agreement", re.IGNORECASE),
     "전략적 제휴": re.compile(
         r"strategic partnership|strategic alliance|collaboration agreement", re.IGNORECASE,
@@ -693,16 +707,100 @@ _PROMOTION_TYPE_KEYWORDS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 방향 판정 (2026-07-28 신규) — "공급·고객 계약"으로 승격돼도 지금까지는 direction이
+# 항상 "unknown"이라 화살표도 안 뜨고 hover에서도 "누가 누구에게 파는지" 안 보인다는
+# 문제(사용자 피드백: "hover만 보고 관계를 바로 알 수 있어야 하고, 사용자는 최소한의
+# 노력만 해야 한다"). 문맥(context)에 공급자 언어/고객 언어 중 뭐가 있는지 보고,
+# 그 문맥이 허브 자신의 공시(forward)인지 상대 회사 자신의 공시(reverse)인지와 조합해
+# 허브 기준 방향(outbound=허브→상대, inbound=상대→허브)으로 뒤집는다.
+#
+# 실측 검증(EveryTie NVIDIA 페이지의 공개 인용문 2건으로 확인):
+#   - NVDA 자신의 8-K(forward), "...large-scale deployment of NVIDIA ... GPUs" →
+#     고객 언어("deployment of") 매칭 → forward이므로 outbound(NVDA→상대) — 맞음.
+#   - Gigabyte 자신의 연차보고서(reverse, 상대=Gigabyte), "Primary source of supply
+#     ... NVIDIA ..." → 공급자 언어("primary source of supply") 매칭 → reverse이므로
+#     outbound(NVDA가 Gigabyte에 공급) — 맞음(Gigabyte 입장에서 NVIDIA는 "공급원"이므로
+#     허브 NVIDIA 기준으로는 자신이 공급하는 쪽).
+#
+# 공급자 언어/고객 언어가 둘 다 없거나 둘 다 있으면(모순) "unknown"으로 남긴다 — 근거가
+# 명확할 때만 판정하고 애매하면 추측하지 않는다는 원칙(원칙 7) 유지.
+#
+# 2026-07-28 재현율 개선: 초판은 "purchase ... from"처럼 동사 바로 뒤에 정해진 명사가
+# 붙어야만 잡혔다(실측: "purchase certain raw materials from X"가 "raw materials"라는
+# 수식어 때문에 안 잡힘 — 합성 표본 20건 중 15건이 방향 unknown으로 남는 문제로 확인됨).
+# 동사와 전치사(from/to) 사이에 최대 5단어까지 아무 단어나 끼어도 잡히게 (?:\S+\s+){0,N}
+# 형태로 느슨하게 바꿨다 — 문장이 지나치게 길면(다른 절로 넘어가면) 그래도 안 잡히므로
+# 여전히 과매칭 위험은 낮다.
+_SUPPLIER_LANGUAGE_RE = re.compile(
+    r"our supplier|supplied by|"
+    r"(?:purchase[sd]?|buy(?:s)?|bought)\s+(?:\S+\s+){0,5}?(?:from|with)\b|"
+    r"sole source|single source|primary source of supply|our vendor|"
+    r"rel(?:y|ies|ying|ied)\s+(?:\S+\s+){0,3}?on\b|"
+    r"depend(?:s|ent|ing)?\s+(?:\S+\s+){0,3}?on\b|"
+    r"licen[sc]e[sd]?\s+(?:\S+\s+){0,5}?from\b|"
+    # "subcontract 작업을 X에게 준다" = X가 그 일을 대신 해준다는 뜻이라, 문법적으로는
+    # "...to"(고객 언어처럼 보임)지만 의미상 반대(X가 우리에게 서비스를 공급) — 그래서
+    # 고객 언어가 아니라 여기(공급자 언어)에 둔다. 사용자 질문으로 발견된 케이스.
+    r"subcontract\w*\s+(?:\S+\s+){0,6}?to\b",
+    re.IGNORECASE,
+)
+_CUSTOMER_LANGUAGE_RE = re.compile(
+    r"suppl(?:y|ies|ied)\s+(?:\S+\s+){0,6}?to\b|"
+    r"(?:sold|sells?|selling)\s+(?:\S+\s+){0,3}?to\b|"
+    r"customers?\s+includ\w*|our customer\b|deploy(?:ment|ed|s)?\s+of|"
+    r"provide[sd]?\s+(?:\S+\s+){0,6}?to\b|"
+    r"licen[sc]e[sd]?\s+(?:\S+\s+){0,5}?to\b",
+    re.IGNORECASE,
+)
+
+
+def infer_relationship_direction(context, search_direction):
+    """context(공시 원문에서 뽑은 발췌문)와 search_direction("forward"=허브 자신의
+    공시에서 찾음, "reverse"=상대 회사 자신의 공시에서 찾음)을 조합해 허브 기준 방향을
+    반환한다. 공급자 언어와 고객 언어가 동시에 없거나(0,0) 동시에 있으면(모순) 판정을
+    포기하고 "unknown"을 반환 — 한쪽만 뚜렷하게 걸릴 때만 판정한다."""
+    if not context or not search_direction:
+        return "unknown"
+    is_supplier_lang = bool(_SUPPLIER_LANGUAGE_RE.search(context))
+    is_customer_lang = bool(_CUSTOMER_LANGUAGE_RE.search(context))
+    if is_supplier_lang == is_customer_lang:
+        return "unknown"
+    if search_direction == "forward":
+        return "outbound" if is_customer_lang else "inbound"
+    return "outbound" if is_supplier_lang else "inbound"
+
+
+# 부정 가드 (2026-07-28 신규) — "No single customer accounted for more than 10% of
+# our revenue" 같은 부정문은 오히려 "집중 위험이 없다"는 뜻인데, _DEAL_KEYWORDS_RE는
+# "customers"라는 단어만 보고 그대로 승격시켜버린다(사용자 질문으로 발견된 케이스).
+# "no/not/none ... (customer/supplier/vendor) ... (more than/accounted for/represented)"
+# 형태를 잡아 이 문장은 애초에 승격하지 않는다 — EveryTie 방법론의 negation guard와
+# 같은 발상("no customer accounted for more than 10%"는 집중의 반대 의미).
+_NEGATION_GUARD_RE = re.compile(
+    r"\b(?:no|not|none|neither)\b(?:\s+\S+){0,6}?\s+"
+    r"(?:customer|supplier|vendor)s?\b(?:\s+\S+){0,8}?\s+"
+    r"(?:more than|accounted for|represented|exceed(?:ed|s)?)",
+    re.IGNORECASE,
+)
+
+
 def promote_mentions_with_context(filing_edges):
     """attach_context_snippets() 이후에 호출한다. "공시 내 언급" 엣지 중 실제 문맥을
     확보한 것만 검사해, 거래 관련 키워드가 있으면 구체적 관계 유형(등급 B)으로 승격하고,
-    문맥이 없거나(상위 N개 밖) 노이즈 키워드가 함께 있으면 그대로 둔다(과확신보다 보수적
-    판단을 우선). filing_edges를 그 자리에서 수정하고 그대로 반환한다."""
+    문맥이 없거나(상위 N개 밖) 노이즈 키워드·부정 가드가 함께 있으면 그대로 둔다(과확신보다
+    보수적 판단을 우선). 승격된 건은 전부 infer_relationship_direction()으로 방향도
+    시도한다 — "전략적 제휴"라고 분류돼도 실제 문맥은 "OO에 제품을 대규모 공급"처럼 방향이
+    뚜렷한 경우가 흔하다(실측: NVDA-Meta 8-K, 문구는 "strategic partnership"이지만 내용은
+    "large-scale deployment of NVIDIA ... GPUs"). 공급자/고객 언어가 뚜렷하지 않으면
+    infer_relationship_direction()이 알아서 "unknown"을 반환하므로, 유형별로 시도 여부를
+    가르지 않고 전부 통과시켜도 안전하다. filing_edges를 그 자리에서 수정하고 그대로
+    반환한다."""
     for e in filing_edges:
         if e["relationship_type"] != "공시 내 언급":
             continue
         context = e.get("context")
-        if not context or _NOISE_KEYWORDS_RE.search(context):
+        if not context or _NOISE_KEYWORDS_RE.search(context) or _NEGATION_GUARD_RE.search(context):
             continue
         promoted_type = next(
             (name for name, pattern in _PROMOTION_TYPE_KEYWORDS.items() if pattern.search(context)),
@@ -713,5 +811,5 @@ def promote_mentions_with_context(filing_edges):
         if promoted_type:
             e["relationship_type"] = promoted_type
             e["evidence_grade"] = "B"
-            e["direction"] = "unknown"
+            e["direction"] = infer_relationship_direction(context, e.get("search_direction"))
     return filing_edges
