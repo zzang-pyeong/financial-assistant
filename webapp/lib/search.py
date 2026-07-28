@@ -7,6 +7,8 @@ import streamlit as st
 from lib.data import (
     get_price_history, get_yf_info, get_yf_calendar, get_finnhub_recommendation_trends,
     get_finnhub_company_news, resolve_ticker,
+    get_finnhub_price_target, get_finnhub_upgrade_downgrade,
+    get_yf_analyst_price_targets, get_yf_upgrades_downgrades,
 )
 from lib.indicators import compute_indicators, classify_indicator_signals
 from lib.peers import classify_peers, get_financial_health
@@ -16,6 +18,7 @@ from lib.ownership import (
 from lib.qualitative import (
     classify_news_tone, news_tone_summary, classify_analyst_trend,
     filter_analyst_related_news, filter_corporate_event_news, match_counterparties,
+    summarize_price_target, normalize_upgrade_downgrade,
 )
 from lib.config import NEWS_LOOKBACK_DAYS, ANALYST_NEWS_LOOKBACK_DAYS, BOARD_NEWS_LIMIT
 from lib.known_companies import STATIC_KNOWN_COMPANIES
@@ -90,6 +93,16 @@ def fetch_and_store_ticker(raw_input):
             rec_trends = get_finnhub_recommendation_trends(ticker)
             analyst_trend = classify_analyst_trend(rec_trends)
 
+            # 목표주가/상향·하향 이력 — Finnhub 프리미엄 전용이라 무료 키에서는 흔히 비어
+            # 있어(둘 다 함수 안에서 조용히 빈 dict/리스트로 폴백), 항상 yfinance도 같이
+            # 불러와 summarize_price_target/normalize_upgrade_downgrade가 고른다.
+            price_target = summarize_price_target(
+                get_finnhub_price_target(ticker), get_yf_analyst_price_targets(ticker),
+            )
+            analyst_actions = normalize_upgrade_downgrade(
+                get_finnhub_upgrade_downgrade(ticker), get_yf_upgrades_downgrades(ticker),
+            )
+
             # 애널리스트/기업이벤트 관련 뉴스도 위에서 받은 60일 데이터를 재사용.
             analyst_news = filter_analyst_related_news(wide_news, ticker, company_name)
             corporate_events = filter_corporate_event_news(wide_news, ticker, company_name)
@@ -137,6 +150,7 @@ def fetch_and_store_ticker(raw_input):
         signals=signals,
         news_classified=news_classified, news_summary=news_summary,
         analyst_trend=analyst_trend, analyst_news=analyst_news, corporate_events=corporate_events,
+        price_target=price_target, analyst_actions=analyst_actions,
         relationship_edges=relationship_edges,
     )
     if matched_name:

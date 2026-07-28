@@ -414,6 +414,57 @@ def classify_analyst_trend(rec_trends):
     }
 
 
+_ACTION_LABELS = {"up": "상향", "down": "하향", "init": "신규", "main": "유지", "reit": "재확인"}
+
+
+def _action_label(action):
+    return _ACTION_LABELS.get((action or "").strip().lower(), (action or "").strip() or "변경")
+
+
+def summarize_price_target(finnhub_pt, yf_pt):
+    """평균/최고/최저/중앙값 목표주가를 화면에 쓸 형태로 정리한다. Finnhub는 프리미엄
+    전용이라 무료 키에서는 targetMean이 비어있는 게 보통이므로, 그럴 때만 yfinance로
+    폴백한다(known_companies 우선순위 병합과 같은 패턴 — 합치지 않고 첫 유효 소스만 채택).
+    둘 다 평균값을 못 주면 표시할 게 없으므로 None."""
+    if finnhub_pt and finnhub_pt.get("targetMean"):
+        return {
+            "mean": finnhub_pt.get("targetMean"), "high": finnhub_pt.get("targetHigh"),
+            "low": finnhub_pt.get("targetLow"), "median": finnhub_pt.get("targetMedian"),
+            "source": "Finnhub",
+        }
+    if yf_pt and yf_pt.get("mean"):
+        return {
+            "mean": yf_pt.get("mean"), "high": yf_pt.get("high"),
+            "low": yf_pt.get("low"), "median": yf_pt.get("median"),
+            "source": "Yahoo Finance",
+        }
+    return None
+
+
+def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
+    """애널리스트 상향/하향 이력을 화면용 공통 스키마로 정리한다. Finnhub 프리미엄
+    전용 엔드포인트가 비어있을 때만(무료 키 제약) yfinance로 폴백 — 두 소스를 합치면
+    같은 이벤트가 중복 집계될 위험이 있어 폴백만 쓴다(summarize_price_target과 동일 원칙).
+    최신순으로 정렬해 상위 limit개만 반환."""
+    rows = []
+    if finnhub_rows:
+        for r in finnhub_rows:
+            rows.append({
+                "date": r.get("gradeTime"), "firm": r.get("company"),
+                "from_grade": r.get("fromGrade") or "", "to_grade": r.get("toGrade") or "",
+                "action_label": _action_label(r.get("action")), "source": "Finnhub",
+            })
+    elif yf_rows:
+        for r in yf_rows:
+            rows.append({
+                "date": r.get("date"), "firm": r.get("firm"),
+                "from_grade": r.get("from_grade") or "", "to_grade": r.get("to_grade") or "",
+                "action_label": _action_label(r.get("action")), "source": "Yahoo Finance",
+            })
+    rows.sort(key=lambda r: r["date"] or 0, reverse=True)
+    return rows[:limit]
+
+
 # 상대회사 자체 뉴스 검색 기간 — SEC 공시는 몇 년치를 보지만, 뉴스는 최근 보도 위주로만
 # 충분하다(오래된 기사는 지금 관계 설명으로 안 맞을 수 있음).
 _COUNTERPARTY_NEWS_LOOKBACK_DAYS = 180

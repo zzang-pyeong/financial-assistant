@@ -172,6 +172,77 @@ def get_finnhub_recommendation_trends(ticker):
         return []
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_finnhub_price_target(ticker):
+    """평균/최고/최저/중앙값 목표주가 — Finnhub 프리미엄 플랜 전용 엔드포인트라 무료
+    키에서는 빈 dict가 흔하다(호출부 lib/qualitative.py::summarize_price_target이
+    get_yf_analyst_price_targets()로 폴백)."""
+    if not FINNHUB_KEY:
+        return {}
+    try:
+        r = requests.get(
+            "https://finnhub.io/api/v1/stock/price-target",
+            params={"symbol": ticker, "token": FINNHUB_KEY},
+            timeout=10,
+        )
+        data = r.json()
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_finnhub_upgrade_downgrade(ticker):
+    """최근 애널리스트 상향/하향 이력 — 마찬가지로 Finnhub 프리미엄 전용이라 무료
+    키에서는 빈 리스트가 흔하다(get_yf_upgrades_downgrades()로 폴백)."""
+    if not FINNHUB_KEY:
+        return []
+    try:
+        r = requests.get(
+            "https://finnhub.io/api/v1/stock/upgrade-downgrade",
+            params={"symbol": ticker, "token": FINNHUB_KEY},
+            timeout=10,
+        )
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_yf_analyst_price_targets(ticker):
+    """Finnhub 목표주가가 비었을 때(무료 키 제약) 쓰는 폴백 — yfinance는 무료로 제공."""
+    try:
+        data = yf.Ticker(ticker).analyst_price_targets
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_yf_upgrades_downgrades(ticker):
+    """Finnhub 상향/하향 이력이 비었을 때 쓰는 폴백. 날짜는 앱 전역 관례대로 unix epoch로
+    맞춰서 반환한다(다른 뉴스/공시 근거와 같은 방식으로 다뤄지도록)."""
+    try:
+        df = yf.Ticker(ticker).upgrades_downgrades
+        if df is None or df.empty:
+            return []
+        rows = []
+        for grade_date, row in df.iterrows():
+            try:
+                epoch = int(grade_date.timestamp())
+            except Exception:
+                epoch = None
+            rows.append({
+                "date": epoch, "firm": row.get("Firm"),
+                "from_grade": row.get("FromGrade"), "to_grade": row.get("ToGrade"),
+                "action": row.get("Action"),
+            })
+        return rows
+    except Exception:
+        return []
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_finnhub_company_news(ticker, from_date, to_date):
     if not FINNHUB_KEY:
