@@ -915,3 +915,50 @@ def attach_context_snippets(filing_edges, max_companies=_MAX_SNIPPET_COMPANIES):
             if snippet:
                 edge["context"] = snippet
     return filing_edges
+
+
+# ---------------------------------------------------------------------------
+# 단순 언급 승격 — 사용자 피드백: CoreWeave/IREN처럼 실제로는 공급·고객 관계로 보이는
+# 회사가 전부 "공시 내 언급"(D등급, 기본 숨김)으로만 잡혀서 화면에 안 보이는 문제.
+# attach_context_snippets()가 확보한 문맥(상위 _MAX_SNIPPET_COMPANIES개만 있음)에
+# 거래 관련 키워드가 있고 노이즈 키워드(경쟁사 나열·소송)가 없으면, 구체적 관계 유형으로
+# 승격해 기본 화면에 보이게 한다. 승격된 엣지는 등급 B(구조화된 문서 자체는 아니지만
+# SEC 문맥에서 관계 가능성이 높음) — 여전히 방향은 unknown(문맥만으로 공급자/고객 중
+# 누가 상대인지 확정할 수 없음).
+# ---------------------------------------------------------------------------
+_PROMOTION_TYPE_KEYWORDS = {
+    "합작투자": re.compile(r"joint venture", re.IGNORECASE),
+    "라이선싱": re.compile(r"licens\w*\s+agreement", re.IGNORECASE),
+    "전략적 제휴": re.compile(
+        r"strategic partnership|strategic alliance|collaboration agreement", re.IGNORECASE,
+    ),
+    "공급·고객 계약": re.compile(
+        r"supply agreement|\bcustomers?\b|\bvendors?\b|\bsuppliers?\b|purchase orders?|"
+        r"subcontract\w*",
+        re.IGNORECASE,
+    ),
+}
+
+
+def promote_mentions_with_context(filing_edges):
+    """attach_context_snippets() 이후에 호출한다. "공시 내 언급" 엣지 중 실제 문맥을
+    확보한 것만 검사해, 거래 관련 키워드가 있으면 구체적 관계 유형(등급 B)으로 승격하고,
+    문맥이 없거나(상위 N개 밖) 노이즈 키워드가 함께 있으면 그대로 둔다(과확신보다 보수적
+    판단을 우선). filing_edges를 그 자리에서 수정하고 그대로 반환한다."""
+    for e in filing_edges:
+        if e["relationship_type"] != "공시 내 언급":
+            continue
+        context = e.get("context")
+        if not context or _NOISE_KEYWORDS_RE.search(context):
+            continue
+        promoted_type = next(
+            (name for name, pattern in _PROMOTION_TYPE_KEYWORDS.items() if pattern.search(context)),
+            None,
+        )
+        if promoted_type is None and _DEAL_KEYWORDS_RE.search(context):
+            promoted_type = "공급·고객 계약"
+        if promoted_type:
+            e["relationship_type"] = promoted_type
+            e["evidence_grade"] = "B"
+            e["direction"] = "unknown"
+    return filing_edges

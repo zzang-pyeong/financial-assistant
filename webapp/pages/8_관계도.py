@@ -16,7 +16,7 @@ from lib.charts import (
 )
 from lib.known_companies import STATIC_KNOWN_COMPANIES
 from lib.sec_filings import (
-    find_filing_relationships, attach_context_snippets,
+    find_filing_relationships, attach_context_snippets, promote_mentions_with_context,
     find_subsidiaries, find_beneficial_owners,
 )
 from lib.logos import get_circular_logos
@@ -45,8 +45,8 @@ st.caption("⚠️ 공시 내 언급은 실제 거래 관계가 아닐 수 있�
 with st.expander("이 화면을 읽을 때 알아둘 점"):
     st.markdown(
         "- **자회사·지분 보유는 공식 SEC 문서(Exhibit 21, Schedule 13D/13G)를 우선 근거로 "
-        "합니다** — 근거 등급 A.\n"
-        "- **뉴스 기반 관계(M&A·계약·제휴)는 공식 확인 전 보도일 수 있습니다** — 근거 등급 C.\n"
+        "합니다.**\n"
+        "- **뉴스 기반 관계(M&A·계약·제휴)는 공식 확인 전 보도일 수 있습니다.**\n"
         "- **공시 내 언급은 문맥이 다양합니다.** 경쟁사 비교, 소송 상대, 위험요인 섹션의 "
         "나열 등 실제 거래관계가 아닐 수 있습니다 — 기본 화면에서는 숨기고, 아래 토글로 "
         "켜야 보입니다.\n"
@@ -86,6 +86,10 @@ if st.session_state.get("filing_edges_ticker") != ticker:
     filing_edges = find_filing_relationships(ticker, hub_name, known, on_progress=_on_progress)
     progress.progress(1.0, text="공시 원문에서 계약 문맥 확인 중...")
     filing_edges = attach_context_snippets(filing_edges)
+    # 문맥에 거래 관련 키워드가 있으면 "공시 내 언급"(기본 숨김)에서 구체적 관계 유형으로
+    # 승격 — CoreWeave/IREN처럼 실제 공급·고객 관계로 보이는 회사가 단순 언급으로만
+    # 잡혀 기본 화면에서 안 보이던 문제(사용자 피드백)를 해결한다.
+    filing_edges = promote_mentions_with_context(filing_edges)
     progress.empty()
     st.session_state.update(filing_edges=filing_edges, filing_edges_ticker=ticker)
 
@@ -156,20 +160,23 @@ def _best_description(g, max_chars=200):
     return text
 
 
-# --- 필터: 관계 유형 / 근거 등급 / 공시 내 언급 포함 / 기간 (작업 지시서 5절) ---------
+# --- 필터: 관계 유형 / 공시 내 언급 포함 / 기간 ---------------------------------------
+# 근거 등급(A~D) 문자는 화면에 노출하지 않는다 — 사용자 피드백: 등급 표기가 오히려 UI를
+# 복잡하게 만들 뿐, "공시 내 언급 포함" 토글이 이미 D등급(단순 언급) 노출 여부를 그대로
+# 통제하므로 별도 등급 선택 UI는 없어도 같은 걸 할 수 있다. 등급 자체는 내부적으로는
+# 계속 쓴다(lib/charts.py::group_relationship_edges가 방향·지분율 대표값을 고를 때
+# 근거 등급이 높은 엣지를 우선하는 데 사용).
 _CORE_TYPES = ["자회사", "지분 투자·보유", "M&A", "공급·고객 계약", "전략적 제휴", "합작투자", "라이선싱"]
 _DEAL_TYPES = {"M&A", "공급·고객 계약", "전략적 제휴", "합작투자", "라이선싱"}
 _PERIOD_DAYS = {"최근 12개월": 365, "최근 24개월": 730, "전체": None}
 
 st.subheader("필터")
-f_col1, f_col2, f_col3, f_col4 = st.columns([2, 2, 1, 1])
+f_col1, f_col2, f_col3 = st.columns([3, 1, 1])
 with f_col1:
     selected_types = st.multiselect("관계 유형", _CORE_TYPES, default=_CORE_TYPES)
 with f_col2:
-    selected_grades = st.multiselect("근거 등급", ["A", "B", "C", "D"], default=["A", "B", "C"])
-with f_col3:
     include_mentions = st.toggle("공시 내 언급 포함", value=False)
-with f_col4:
+with f_col3:
     period_choice = st.radio("기간", list(_PERIOD_DAYS.keys()), index=1)
 
 period_days = _PERIOD_DAYS[period_choice]
@@ -181,10 +188,9 @@ if period_days:
 
 def _edge_visible(e):
     rel_type = e["relationship_type"]
-    grade = e.get("evidence_grade", "D")
     if rel_type == "공시 내 언급":
-        return include_mentions and "D" in selected_grades
-    if rel_type not in selected_types or grade not in selected_grades:
+        return include_mentions
+    if rel_type not in selected_types:
         return False
     # 자회사는 기간 필터의 영향을 받지 않는다(작업 지시서 5절 — 공시 기준일만 표기).
     if cutoff_epoch and rel_type != "자회사":
@@ -296,7 +302,6 @@ for cp_ticker, g in grouped:
         "관계 유형": ", ".join(g["types"]),
         "방향": _DIRECTION_LABELS.get(g["direction"], "미확인"),
         "상태": g["latest_status"] or "",
-        "근거 등급": g["best_grade"],
         "지분율": f"{g['ownership_pct']:.1f}%" if g["ownership_pct"] is not None else "",
         "최근 근거일": _date_str(g["latest_dt"]),
         "핵심 발췌": _best_description(g),
@@ -321,10 +326,6 @@ st.dataframe(
         "방향": st.column_config.TextColumn(
             "방향", width="small", help="방향이 공식 근거로 확인된 관계만 화살표로 표시합니다.",
         ),
-        "근거 등급": st.column_config.TextColumn(
-            "근거 등급", width="small",
-            help="A: 구조화된 SEC 공식 문서 · B: SEC 문맥 정황 · C: 뉴스 보도 · D: 공시 내 단순 언급",
-        ),
         "지분율": st.column_config.TextColumn("지분율", width="small", help="확실히 추출된 경우만 표시합니다."),
         "핵심 발췌": st.column_config.TextColumn(
             "핵심 발췌", width="large",
@@ -333,14 +334,14 @@ st.dataframe(
         "원문": st.column_config.LinkColumn("원문", display_text="열기", width="small"),
     },
 )
-st.caption("⚠️ 근거가 많다고 관계가 더 확실하다는 뜻은 아닙니다 — 등급과 원문을 직접 확인하세요.")
+st.caption("⚠️ 근거가 많다고 관계가 더 확실하다는 뜻은 아닙니다 — 원문을 직접 확인하세요.")
 
 # 근거 전체를 엣지 단위로 — 예전엔 이 정보가 그래프 hover 안에만 있어서 원문으로 바로
 # 갈 방법이 없었고(hover에서는 링크를 클릭할 수 없다), 터치 환경에서는 hover 자체가 안 떴다.
 st.subheader("근거 원문")
 detail_rows = []
 for cp_ticker, g in grouped:
-    for dt, headline, url, status, context, rel_type, grade, source_kind in sorted(
+    for dt, headline, url, status, context, rel_type, _grade, source_kind in sorted(
         g["headlines"], key=lambda h: h[0], reverse=True,
     ):
         detail_rows.append({
@@ -348,7 +349,6 @@ for cp_ticker, g in grouped:
             "상대기업": g["name"] or cp_ticker,
             "소스": source_kind or ("SEC 공시" if rel_type == "공시 내 언급" else "뉴스"),
             "관계 유형": rel_type,
-            "등급": grade,
             "상태": status or "",
             "발췌 / 헤드라인": context or headline,
             "원문": url or None,
@@ -363,7 +363,6 @@ st.dataframe(
         "상대기업": st.column_config.TextColumn("상대기업", width="small"),
         "소스": st.column_config.TextColumn("소스", width="small"),
         "관계 유형": st.column_config.TextColumn("관계 유형", width="small"),
-        "등급": st.column_config.TextColumn("등급", width="small"),
         "상태": st.column_config.TextColumn("상태", width="small"),
         "발췌 / 헤드라인": st.column_config.TextColumn("발췌 / 헤드라인", width="large"),
         "원문": st.column_config.LinkColumn("원문", display_text="열기", width="small"),
