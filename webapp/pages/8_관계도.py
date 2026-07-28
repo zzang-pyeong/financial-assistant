@@ -11,7 +11,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from lib._shared_core.page_helpers import (
     require_analysis, inject_base_styles, render_wordmark, render_ticker_header, render_info_cards,
 )
-from lib._shared_core.search import render_sidebar
+from lib._shared_core.search import render_sidebar, fetch_and_store_ticker
 from lib._shared_core.charts import (
     render_relationship_graph_figure, group_relationship_edges, direction_label,
     STATIC_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
@@ -254,16 +254,30 @@ if len(ticker_like) > SECTOR_CLUSTER_THRESHOLD:
     else:
         sectors = st.session_state.get("relationship_sectors", {})
 
-st.plotly_chart(
+graph_event = st.plotly_chart(
     render_relationship_graph_figure(
         ticker, hub_name, visible_edges,
         logos=st.session_state.get("relationship_logos", {}), sectors=sectors,
     ),
     use_container_width=True, config=STATIC_PLOTLY_CONFIG,
+    on_select="rerun", selection_mode="points", key="relationship_graph_select",
 )
+# 노드 클릭 시 그 회사로 검색 이동 — 사이드바 미니 검색창(search.py::render_sidebar_search)과
+# 완전히 같은 로직(fetch_and_store_ticker → step="intro" → switch_page)을 그대로 재사용한다.
+# customdata는 상대기업 노드에만 있고(charts.py) 허브·범례 트레이스엔 없어서, 그쪽을 눌러도
+# 여긴 조용히 아무 일도 안 한다.
+clicked_points = (graph_event or {}).get("selection", {}).get("points", [])
+if clicked_points:
+    clicked = clicked_points[0].get("customdata")
+    clicked_ticker = clicked[0] if isinstance(clicked, list) else clicked
+    if clicked_ticker and fetch_and_store_ticker(clicked_ticker):
+        st.session_state.step = "intro"
+        st.switch_page("app.py")
+
 caption = (
-    "노드에 마우스를 올리면 요약이 보입니다. 화살표는 방향이 공식 근거로 확인된 관계에만 "
-    "표시됩니다 — 나머지는 선만 있습니다. 전체 근거와 원문 링크는 아래 표에 있습니다."
+    "노드를 클릭하면 그 회사로 이동, 마우스를 올리면 요약이 보입니다. 화살표는 방향이 공식 "
+    "근거로 확인된 관계에만 표시됩니다 — 나머지는 선만 있습니다. 전체 근거와 원문 링크는 "
+    "아래 표에 있습니다."
 )
 # 섹터가 실제로 2종류 이상 나와야 클러스터링이 눈에 보이는 효과가 있다 — 다 조회했는데
 # 전부 못 찾았거나(sectors 값이 죄다 None) 한 섹터뿐이면 "묶어서 배치했다"는 문구가

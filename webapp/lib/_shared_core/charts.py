@@ -125,6 +125,44 @@ def render_bar_chart_figure(series, color="#2f6fed", quarterly=False):
     return fig
 
 
+def render_market_cap_share_figure(target_ticker, target_cap, peers):
+    """대상 종목이 동종업계(Tier1 peer) 그룹 시가총액 합계에서 차지하는 비중을 가로
+    스택 막대 1개로 병치한다. part-to-whole이면서 "이 회사가 포인트, 나머지는 맥락"인
+    emphasis 패턴이라 개별 peer는 전부 같은 회색으로 묶고 대상 종목만 브랜드 블루로
+    강조한다 — peer끼리 색으로 구분하는 건 여기선 의미가 없다(개별 비교는 Peer Compare
+    페이지 표가 이미 제공). peers: [{"ticker":, "marketCap":}, ...] (marketCap은 숫자,
+    None 없이 이미 걸러서 넘겨야 함)."""
+    target_b = target_cap / 1e9
+    peers_sorted = sorted(peers, key=lambda p: p["marketCap"], reverse=True)
+    total_b = target_b + sum(p["marketCap"] / 1e9 for p in peers_sorted)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=["cap_share"], x=[target_b], orientation="h",
+        marker=dict(color="#2f6fed"),
+        text=[f"{target_ticker} {target_b/total_b*100:.0f}%"], textposition="inside",
+        insidetextanchor="middle", insidetextfont=dict(color="white", size=13),
+        hovertemplate=f"<b>{target_ticker}</b><br>${{x:,.1f}}B · 비중 {target_b/total_b*100:.1f}%<extra></extra>",
+    ))
+    for p in peers_sorted:
+        p_b = p["marketCap"] / 1e9
+        fig.add_trace(go.Bar(
+            y=["cap_share"], x=[p_b], orientation="h",
+            marker=dict(color="#6b7280"), showlegend=False,
+            hovertemplate=f"<b>{p['ticker']}</b><br>${{x:,.1f}}B · 비중 {p_b/total_b*100:.1f}%<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="stack", height=90, showlegend=False,
+        margin=dict(l=0, r=0, t=0, b=0),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(visible=False, fixedrange=True),
+        yaxis=dict(visible=False, fixedrange=True),
+        dragmode=False,
+        bargap=0,
+    )
+    return fig
+
+
 # 관계 유형 목록·이름은 관계도 표준 스키마(직원 지시서)에 맞춘다 — "M&A"는 예전
 # "인수합병(M&A)"의 축약형, "공급·고객 계약"은 "공급 계약"의 새 이름. 지분 투자·보유는
 # 13D/13G 신규 추출(find_beneficial_owners)에서만 나온다. (자회사 유형은 추가했다가
@@ -640,6 +678,9 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, se
         marker=dict(size=38, color="rgba(0,0,0,0)"),
         textfont=dict(size=12, color="#3c4043"),
         hovertext=hover_text, hoverinfo="text", showlegend=False,
+        # 클릭 시 어느 상대기업인지 식별하는 용도 — pages/8_관계도.py가 st.plotly_chart의
+        # on_select 이벤트에서 이 값을 읽어 그 회사로 검색 이동한다(2026-07-29).
+        customdata=node_text,
     ))
 
     # 허브 — 로고가 있으면 흰 원 + 굵은 파란 테두리(중심임을 테두리로 표현), 없으면 예전처럼
