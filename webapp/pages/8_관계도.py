@@ -8,7 +8,7 @@ import streamlit as st
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
 from lib.search import render_sidebar
 from lib.charts import (
     render_relationship_graph_figure, group_relationship_edges,
@@ -34,7 +34,7 @@ with st.sidebar:
 ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Connection", "Map", align="center")
-    st.caption(f"{ticker} · 기업 연결 근거")
+    render_ticker_header(ticker, "기업 연결 근거")
 st.divider()
 
 # 목적 문장 + 경고 문장은 항상 보이게(작업 지시서 5절) — 나머지 상세 주의사항은

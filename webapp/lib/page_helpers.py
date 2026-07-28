@@ -2,6 +2,8 @@ from datetime import datetime
 
 import streamlit as st
 
+from .data import get_company_logo_url
+
 
 def inject_base_styles():
     """앱 전체 글꼴을 각진 느낌의 산세리프(IBM Plex Sans KR)로 통일하고,
@@ -38,6 +40,30 @@ def render_wordmark(first, second, size="2.2rem", align="left", margin="0 0 1rem
         f"<div style='text-align:{align}; margin:{margin}; font-size:{size}; "
         f"font-weight:700; letter-spacing:-0.02em;'>"
         f"{first}{sep}<span style='color:#2f6fed;'>{second}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_ticker_header(ticker, suffix=None):
+    """페이지 헤더의 티커 표시 — 굵고 진한 글씨 + 정사각형 회사 로고를 나란히 보여준다
+    (사용자 피드백: 기존 st.caption(ticker)은 옅은 회색이라 눈에 잘 안 띔). suffix가
+    있으면 " · {suffix}"를 이어붙인다(예: 관계도의 "기업 연결 근거").
+    로고는 object-fit:contain으로 정사각 틀에 맞춰서 넣는다 — 관계도 그래프 노드의 원형
+    크롭(lib/logos.py)과 달리 여기는 일반 HTML이라 서버 가공 없이 CSS만으로 충분하다.
+    로고가 없는 종목(소형주 등)은 텍스트만 — 로고 없음은 흔한 정상 경로."""
+    logo_url = get_company_logo_url(ticker)
+    logo_html = (
+        f"<img src='{logo_url}' style='width:28px; height:28px; object-fit:contain; "
+        "border-radius:6px; border:1px solid #e5e7eb; padding:2px; background:#fff;' />"
+        if logo_url else ""
+    )
+    suffix_html = (
+        f"<span style='color:#6b7280; font-weight:400;'> · {suffix}</span>" if suffix else ""
+    )
+    st.markdown(
+        "<div style='display:flex; align-items:center; justify-content:center; "
+        f"gap:0.45rem; font-size:1.05rem;'>{logo_html}"
+        f"<span style='font-weight:700; color:#111827;'>{ticker}</span>{suffix_html}</div>",
         unsafe_allow_html=True,
     )
 

@@ -12,7 +12,7 @@ from lib.ownership import (
     insider_pct_interpretation,
 )
 from lib.glossary import render_glossary
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
 from lib.search import render_sidebar
 
 st.set_page_config(page_title="Ownership Map — EnterTicker", layout="wide")
@@ -25,7 +25,7 @@ with st.sidebar:
 ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Ownership", "Map", align="center")
-    st.caption(ticker)
+    render_ticker_header(ticker)
 st.divider()
 
 own = st.session_state.ownership

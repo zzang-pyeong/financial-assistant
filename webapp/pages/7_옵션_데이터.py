@@ -8,7 +8,7 @@ import streamlit as st
 sys.path.append(str(Path(__file__).parent.parent))
 
 from lib.data import get_option_expirations, get_option_chain
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
 from lib.search import render_sidebar
 
 st.set_page_config(page_title="Options Data — EnterTicker", layout="wide")
@@ -21,7 +21,7 @@ with st.sidebar:
 ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Options", "Data", align="center")
-    st.caption(ticker)
+    render_ticker_header(ticker)
     st.caption(
         "⚠️ '지금 이 순간'의 스냅샷입니다. 과거 추이가 아니라, 앞으로 6개월 이내 만기가 도래할 "
         "옵션들의 현재 미결제약정(OI)·거래량을 보여줍니다."
@@ -40,48 +40,6 @@ if not near_expirations:
     st.info("앞으로 6개월 이내 만기인 옵션이 없습니다 (가장 가까운 만기가 6개월 이후입니다).")
     st.stop()
 
-st.subheader("만기별 미결제약정(OI) 형성 현황 (향후 6개월)")
-rows = []
-with st.spinner("만기별 옵션 데이터 조회 중..."):
-    for exp in near_expirations:
-        calls, puts = get_option_chain(ticker, exp)
-        if calls is None or puts is None:
-            continue
-        rows.append({
-            "만기일": exp,
-            "콜 OI 합계": int(calls["openInterest"].fillna(0).sum()),
-            "풋 OI 합계": int(puts["openInterest"].fillna(0).sum()),
-            "콜 거래량 합계": int(calls["volume"].fillna(0).sum()),
-            "풋 거래량 합계": int(puts["volume"].fillna(0).sum()),
-        })
-
-if not rows:
-    st.info("옵션 체인 데이터를 가져오지 못했습니다.")
-    st.stop()
-
-summary_df = pd.DataFrame(rows)
-# 콜 OI 합계가 0인 만기가 있으면 replace(0, pd.NA) 이후 나눗셈 결과가 object dtype이 되어
-# .round(2)가 TypeError를 던짐(실측: RDW에서 재현) — to_numeric으로 float dtype을 보장.
-summary_df["풋/콜 OI 비율"] = pd.to_numeric(
-    summary_df["풋 OI 합계"] / summary_df["콜 OI 합계"].replace(0, pd.NA),
-    errors="coerce",
-).round(2)
-st.dataframe(summary_df, use_container_width=True, hide_index=True)
-
-with st.expander("📖 이 표, 어떻게 해석하나요?", expanded=True):
-    st.markdown(
-        "- **OI(미결제약정)**: 아직 청산되지 않고 남아있는 계약 수. 클수록 그 만기·방향에 시장의 "
-        "관심/포지션이 많이 몰려 있다는 뜻입니다.\n"
-        "- **풋/콜 OI 비율**: 콜 대비 풋이 얼마나 쌓여 있는지. 1보다 크면 풋이 더 많다는 뜻입니다.\n"
-        "- **예시**: 어떤 만기의 풋/콜 비율이 유독 2.0으로 다른 만기(보통 0.5~1.0)보다 튀어 있다면, "
-        "그 시점(예: 실적 발표 직후 만기)에 하락 리스크를 헤지하려는 수요가 몰렸을 가능성을 "
-        "의심해볼 수 있습니다.\n"
-        "- **주의**: 풋 매수만 있는 게 아니라 풋 매도(하락 안 할 거라는 베팅)도 이 숫자에 섞여 "
-        "있어서, 비율 하나만으로 '시장이 하락을 예상한다'고 단정할 수 없습니다 — 어디까지나 "
-        "참고용 신호입니다."
-    )
-
-st.divider()
 st.subheader("Call/Put Options")
 sel_col, sort_col = st.columns([3, 1])
 with sel_col:
@@ -132,3 +90,45 @@ if calls is not None and puts is not None:
         )
 else:
     st.info("해당 만기의 옵션 데이터를 가져오지 못했습니다.")
+
+st.divider()
+st.subheader("만기별 미결제약정(OI) 형성 현황 (향후 6개월)")
+rows = []
+with st.spinner("만기별 옵션 데이터 조회 중..."):
+    for exp in near_expirations:
+        exp_calls, exp_puts = get_option_chain(ticker, exp)
+        if exp_calls is None or exp_puts is None:
+            continue
+        rows.append({
+            "만기일": exp,
+            "콜 OI 합계": int(exp_calls["openInterest"].fillna(0).sum()),
+            "풋 OI 합계": int(exp_puts["openInterest"].fillna(0).sum()),
+            "콜 거래량 합계": int(exp_calls["volume"].fillna(0).sum()),
+            "풋 거래량 합계": int(exp_puts["volume"].fillna(0).sum()),
+        })
+
+if not rows:
+    st.info("옵션 체인 데이터를 가져오지 못했습니다.")
+    st.stop()
+
+summary_df = pd.DataFrame(rows)
+# 콜 OI 합계가 0인 만기가 있으면 replace(0, pd.NA) 이후 나눗셈 결과가 object dtype이 되어
+# .round(2)가 TypeError를 던짐(실측: RDW에서 재현) — to_numeric으로 float dtype을 보장.
+summary_df["풋/콜 OI 비율"] = pd.to_numeric(
+    summary_df["풋 OI 합계"] / summary_df["콜 OI 합계"].replace(0, pd.NA),
+    errors="coerce",
+).round(2)
+st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+with st.expander("📖 이 표, 어떻게 해석하나요?", expanded=True):
+    st.markdown(
+        "- **OI(미결제약정)**: 아직 청산되지 않고 남아있는 계약 수. 클수록 그 만기·방향에 시장의 "
+        "관심/포지션이 많이 몰려 있다는 뜻입니다.\n"
+        "- **풋/콜 OI 비율**: 콜 대비 풋이 얼마나 쌓여 있는지. 1보다 크면 풋이 더 많다는 뜻입니다.\n"
+        "- **예시**: 어떤 만기의 풋/콜 비율이 유독 2.0으로 다른 만기(보통 0.5~1.0)보다 튀어 있다면, "
+        "그 시점(예: 실적 발표 직후 만기)에 하락 리스크를 헤지하려는 수요가 몰렸을 가능성을 "
+        "의심해볼 수 있습니다.\n"
+        "- **주의**: 풋 매수만 있는 게 아니라 풋 매도(하락 안 할 거라는 베팅)도 이 숫자에 섞여 "
+        "있어서, 비율 하나만으로 '시장이 하락을 예상한다'고 단정할 수 없습니다 — 어디까지나 "
+        "참고용 신호입니다."
+    )

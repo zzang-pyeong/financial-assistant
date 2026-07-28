@@ -12,7 +12,7 @@ from lib.peers import (
     financial_characteristics_comment,
 )
 from lib.glossary import render_glossary
-from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark
+from lib.page_helpers import require_analysis, inject_base_styles, render_wordmark, render_ticker_header
 from lib.search import render_sidebar
 
 _BASIS_KO = {
@@ -32,7 +32,7 @@ with st.sidebar:
 ticker = st.session_state.ticker
 with st.container(key="page_header"):
     render_wordmark("Peer", "Compare", align="center")
-    st.caption(ticker)
+    render_ticker_header(ticker)
 st.divider()
 
 peer_data = st.session_state.peer_data

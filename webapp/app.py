@@ -12,6 +12,7 @@ from lib.translate import to_korean
 from lib.page_helpers import inject_base_styles, render_wordmark, news_date_str
 from lib.search import fetch_and_store_ticker, render_sidebar
 from lib.config import BOARD_NEWS_LIMIT
+from lib.charts import render_price_chart_figure, PERIOD_OPTIONS, PLOTLY_CONFIG
 
 if "step" not in st.session_state:
     st.session_state.step = "search"
@@ -196,6 +197,14 @@ if st.session_state.step == "search":
 # ----------------------------------------------------------------------------
 elif st.session_state.step == "compare":
     render_wordmark("Conflict", "Board", size="2.8rem", align="center", margin="1vh 0 2rem 0")
+
+    # 근거를 읽기 전에 지금 가격이 어떤 모양인지부터 한눈에 보이게 — 상세 기간·분봉은
+    # Price Chart 페이지가 따로 있으니 여기서는 최근 1개월 일봉만 가볍게 보여준다.
+    st.plotly_chart(
+        render_price_chart_figure(st.session_state.df, PERIOD_OPTIONS["1개월"]),
+        use_container_width=True, config=PLOTLY_CONFIG,
+    )
+    st.caption("최근 1개월 일봉입니다 — 더 긴 기간·분봉은 Price Chart 페이지에서 볼 수 있습니다.")
 
     lines = collect_bull_bear_lines()
     col1, col2 = st.columns(2)
