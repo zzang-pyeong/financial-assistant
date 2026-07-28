@@ -31,8 +31,15 @@ st.caption(
     "않고 정직하게 비워둡니다."
 )
 
-income_stmt = data.get_yf_income_stmt(ticker)
-cashflow = data.get_yf_cashflow(ticker)
+# --- 보기 단위(분기/연간) 선택 ------------------------------------------------------
+# 기본값은 분기(사용자 피드백, 2026-07-28: 연간만 보여주면 최근 실적 흐름을 놓친다).
+view_mode = st.segmented_control(
+    "보기 단위", ["분기", "연간"], default="분기", key="fin_view_mode",
+)
+is_quarterly = view_mode != "연간"
+
+income_stmt = data.get_yf_income_stmt(ticker, quarterly=is_quarterly)
+cashflow = data.get_yf_cashflow(ticker, quarterly=is_quarterly)
 
 if income_stmt is None or income_stmt.empty:
     st.warning("재무제표 데이터를 가져오지 못했습니다.")
@@ -52,7 +59,6 @@ if not revenue:
     st.stop()
 
 periods = sorted(revenue.keys(), reverse=True)
-latest = periods[0]
 
 
 def _money(v):
@@ -65,6 +71,26 @@ def _pct(v):
     if not isinstance(v, (int, float)):
         return "N/A"
     return f"{v*100:.1f}%"
+
+
+def _period_label(p):
+    if is_quarterly:
+        return f"{p.year} Q{(p.month - 1) // 3 + 1}"
+    return f"FY{p.year}"
+
+
+def _delta_money_pct(curr, prev):
+    """전 기간 대비 증감률(%) — 둘 다 유효한 숫자일 때만, 지어내지 않는다."""
+    if not isinstance(curr, (int, float)) or not isinstance(prev, (int, float)) or prev == 0:
+        return None
+    return f"{(curr - prev) / abs(prev) * 100:+.1f}%"
+
+
+def _delta_pp(curr, prev):
+    """마진류(비율) 지표는 %가 아니라 %p(퍼센트포인트) 차이로 보여준다."""
+    if not isinstance(curr, (int, float)) or not isinstance(prev, (int, float)):
+        return None
+    return f"{(curr - prev) * 100:+.1f}%p"
 
 
 def _auto_unit(series):
@@ -81,28 +107,76 @@ def _auto_unit(series):
     return series, ""
 
 
-# --- 핵심 지표 카드 (최근 회계연도 기준) --------------------------------------------
-st.subheader(f"핵심 지표 ({latest.strftime('%Y-%m-%d')} 기준 회계연도)")
-row1 = st.columns(4)
-row1[0].metric("매출", _money(revenue.get(latest)))
-row1[1].metric("매출총이익률", _pct((gross_margin or {}).get(latest)))
-row1[2].metric("영업이익률", _pct((operating_margin or {}).get(latest)))
-row1[3].metric("순이익", _money((net_income or {}).get(latest)))
+# --- 조회 기간 선택 (기본: 최신) ----------------------------------------------------
+period_idx = st.selectbox(
+    "조회 기간", options=range(len(periods)),
+    format_func=lambda i: f"{_period_label(periods[i])} ({periods[i].strftime('%Y-%m-%d')} 마감)",
+    index=0,
+)
+selected = periods[period_idx]
+prev_period = periods[period_idx + 1] if period_idx + 1 < len(periods) else None
+delta_note = "전분기 대비" if is_quarterly else "전년 대비"
 
-row2 = st.columns(4)
-row2[0].metric("CapEx", _money((capex or {}).get(latest)))
-row2[1].metric("영업현금흐름(OCF)", _money((ocf or {}).get(latest)))
-row2[2].metric("잉여현금흐름(FCF)", _money((fcf or {}).get(latest)))
-row2[3].metric("CapEx / 매출", _pct((capex_pct or {}).get(latest)))
+# --- 핵심 지표 카드 -----------------------------------------------------------------
+st.subheader(f"핵심 지표 — {_period_label(selected)} ({selected.strftime('%Y-%m-%d')} 마감)")
+st.caption(f"증감률은 {delta_note} · 색상 없이 방향·크기만 표시합니다(가치 판단 아님)")
+
+with st.container(border=True):
+    st.caption("📈 손익")
+    row1 = st.columns(4)
+    row1[0].metric(
+        "매출", _money(revenue.get(selected)),
+        delta=_delta_money_pct(revenue.get(selected), (revenue or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+    row1[1].metric(
+        "매출총이익률", _pct((gross_margin or {}).get(selected)),
+        delta=_delta_pp((gross_margin or {}).get(selected), (gross_margin or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+    row1[2].metric(
+        "영업이익률", _pct((operating_margin or {}).get(selected)),
+        delta=_delta_pp((operating_margin or {}).get(selected), (operating_margin or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+    row1[3].metric(
+        "순이익", _money((net_income or {}).get(selected)),
+        delta=_delta_money_pct((net_income or {}).get(selected), (net_income or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+
+with st.container(border=True):
+    st.caption("💰 현금흐름")
+    row2 = st.columns(4)
+    row2[0].metric(
+        "CapEx", _money((capex or {}).get(selected)),
+        delta=_delta_money_pct((capex or {}).get(selected), (capex or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+    row2[1].metric(
+        "영업현금흐름(OCF)", _money((ocf or {}).get(selected)),
+        delta=_delta_money_pct((ocf or {}).get(selected), (ocf or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+    row2[2].metric(
+        "잉여현금흐름(FCF)", _money((fcf or {}).get(selected)),
+        delta=_delta_money_pct((fcf or {}).get(selected), (fcf or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
+    row2[3].metric(
+        "CapEx / 매출", _pct((capex_pct or {}).get(selected)),
+        delta=_delta_pp((capex_pct or {}).get(selected), (capex_pct or {}).get(prev_period)) if prev_period else None,
+        delta_color="off",
+    )
 
 # --- 추이 -----------------------------------------------------------------------
-st.subheader("추이")
+st.subheader(f"추이 ({'분기별' if is_quarterly else '연도별'})")
 chart_cols = st.columns(2)
 with chart_cols[0]:
     revenue_scaled, revenue_unit = _auto_unit(pd.Series(revenue).sort_index())
     st.caption(f"매출 (단위: ${revenue_unit})" if revenue_unit else "매출 (단위: $)")
     st.plotly_chart(
-        render_bar_chart_figure(revenue_scaled),
+        render_bar_chart_figure(revenue_scaled, quarterly=is_quarterly),
         use_container_width=True, config=STATIC_PLOTLY_CONFIG,
     )
 with chart_cols[1]:
@@ -110,7 +184,7 @@ with chart_cols[1]:
         capex_scaled, capex_unit = _auto_unit(pd.Series(capex).sort_index())
         st.caption(f"CapEx (단위: ${capex_unit})" if capex_unit else "CapEx (단위: $)")
         st.plotly_chart(
-            render_bar_chart_figure(capex_scaled),
+            render_bar_chart_figure(capex_scaled, quarterly=is_quarterly),
             use_container_width=True, config=STATIC_PLOTLY_CONFIG,
         )
     else:
@@ -119,7 +193,7 @@ with chart_cols[1]:
 st.divider()
 
 # --- 경영진 코멘트 ------------------------------------------------------------------
-# 비용 제한: 가장 최근 회계기간에 대해서만, 핵심 항목 4개만 조회한다(전체 기간·전체
+# 비용 제한: 선택된 기간에 대해서만, 핵심 항목 4개만 조회한다(전체 기간·전체
 # 항목을 다 훑으면 8-K 첨부문서를 항목 수만큼 반복 스캔해야 해서 페이지가 느려진다).
 _COMMENTARY_METRICS = [
     ("revenue", "매출"),
@@ -128,13 +202,13 @@ _COMMENTARY_METRICS = [
     ("capex", "CapEx"),
 ]
 
-st.subheader(f"경영진 코멘트 ({latest.strftime('%Y-%m-%d')} 기준 회계연도)")
+st.subheader(f"경영진 코멘트 — {_period_label(selected)} ({selected.strftime('%Y-%m-%d')} 마감)")
 company_name = (st.session_state.info or {}).get("shortName") or ticker
-latest_date = latest.date()
+selected_date = selected.date()
 
 with st.spinner("실적발표 공시·뉴스에서 경영진 코멘트를 찾는 중..."):
     for metric_key, label in _COMMENTARY_METRICS:
-        quotes = financials.find_commentary(ticker, company_name, metric_key, latest_date)
+        quotes = financials.find_commentary(ticker, company_name, metric_key, selected_date)
         with st.expander(label, expanded=bool(quotes)):
             if not quotes:
                 st.caption("공개된 설명 없음")

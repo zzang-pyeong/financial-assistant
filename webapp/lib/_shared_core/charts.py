@@ -101,11 +101,18 @@ def render_price_chart_figure(df, period_days=None):
     return fig
 
 
-def render_bar_chart_figure(series, color="#2f6fed"):
-    """연도별 막대그래프(재무제표 추이용) — st.bar_chart 대신 plotly로 그려서
-    STATIC_PLOTLY_CONFIG(스크롤·확대 비활성화)와 진한 글자색을 다른 차트와 통일한다."""
+def render_bar_chart_figure(series, color="#2f6fed", quarterly=False):
+    """연도별/분기별 막대그래프(재무제표 추이용) — st.bar_chart 대신 plotly로 그려서
+    STATIC_PLOTLY_CONFIG(스크롤·확대 비활성화)와 진한 글자색을 다른 차트와 통일한다.
+    quarterly=True면 x축을 "2025 Q4"처럼 표시한다 — 그냥 strftime("%Y")를 쓰면 같은
+    해의 분기 4개가 전부 "2025"로 겹쳐 보여서(실사용 화면에서 확인) 분기 구분이 안 됐다."""
+    def _label(p):
+        if quarterly:
+            return f"{p.year} Q{(p.month - 1) // 3 + 1}"
+        return p.strftime("%Y")
+
     fig = go.Figure(go.Bar(
-        x=[p.strftime("%Y") for p in series.index], y=series.values, marker_color=color,
+        x=[_label(p) for p in series.index], y=series.values, marker_color=color,
     ))
     fig.update_layout(
         height=280,
