@@ -15,6 +15,40 @@ import requests
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _ANY_TAG_RE = re.compile(r"<[^>]+>")
 
+# 최신 10-K/10-Q는 Inline XBRL이라, 문서 맨 앞(<body> 직후)에 눈에 안 보이는
+# <ix:header>가 있고 그 안에 전체 XBRL context/unit 정의가 들어있다. 이 정의들은
+# "mp:AppleMember"처럼 태그의 텍스트 내용 자체가 회사명을 포함해서, 일반 태그 제거만으론
+# 안 걸러지고 문구 매칭에 그대로 잡힌다(실측: MP Materials 10-Q에서 "Apple" 검색 시 실제
+# 서술 문장("entered into a long-term supply agreement with Apple...")보다 이 헤더 안의
+# "mp:AppleMember" 반복이 훨씬 먼저 나와서, max_candidates를 헤더 안에서 전부 소진해버려
+# 진짜 문장에는 도달하지도 못했다). <ix:header>는 보통 수십~수백KB로 스트리밍 청크
+# 하나보다 커서 여러 청크에 걸쳐 나뉘므로, 청크 간 상태(in_header)를 이어받아 처리한다.
+_IX_HEADER_OPEN_RE = re.compile(r"<ix:header\b", re.IGNORECASE)
+_IX_HEADER_CLOSE_RE = re.compile(r"</ix:header\s*>", re.IGNORECASE)
+
+
+def strip_hidden_ixbrl_header(raw, in_header):
+    """raw(태그가 청크 경계에서 잘리지 않도록 이미 안전하게 자른 조각)에서 <ix:header>
+    블록을 제거한다. (남길 raw, 갱신된 in_header) 튜플을 반환 — in_header를 다음 호출에
+    그대로 넘기면 여러 청크에 걸친 헤더도 올바르게 처리된다."""
+    out = []
+    pos = 0
+    while True:
+        if in_header:
+            m = _IX_HEADER_CLOSE_RE.search(raw, pos)
+            if not m:
+                return "", True
+            pos = m.end()
+            in_header = False
+        else:
+            m = _IX_HEADER_OPEN_RE.search(raw, pos)
+            if not m:
+                out.append(raw[pos:])
+                return "".join(out), False
+            out.append(raw[pos:m.start()])
+            pos = m.start()
+            in_header = True
+
 # 스트리밍 중 이 크기를 넘게 읽었는데도 매칭을 한 번도 못 찾으면 포기한다(비정상적으로
 # 큰 첨부가 붙은 공시로부터 스스로를 보호). 실측상 매칭은 보통 앞쪽 수백 KB 안에 나온다.
 _MAX_FILING_BYTES = 6 * 1024 * 1024
@@ -101,12 +135,17 @@ def stream_find_context(
     carry = ""
     total = 0
     occurrences = []
+    in_header = False
 
     try:
         with requests.get(
             url, headers={"User-Agent": user_agent}, timeout=15, stream=True,
         ) as r:
-            decoder = codecs.getincrementaldecoder(r.encoding or "utf-8")(errors="ignore")
+            # SEC EDGAR는 Content-Type에 charset을 안 붙여 보내서 requests가 r.encoding을
+            # ISO-8859-1로 잘못 추측한다(HTTP 스펙상 text/* 기본값) — 실제 문서는 항상
+            # UTF-8이라, 그 추측을 따르면 커브드 따옴표 같은 멀티바이트 문자가 깨진다
+            # (실측: "Company's"가 "Company\x99s" 식으로 깨짐). 항상 UTF-8로 디코딩한다.
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
             for chunk in r.iter_content(chunk_size=stream_chunk):
                 if not chunk:
                     continue
@@ -114,7 +153,8 @@ def stream_find_context(
                 raw = carry + decoder.decode(chunk)
                 cut = safe_split_point(raw)
                 carry = raw[cut:]
-                tail += clean_fragment(raw[:cut])
+                visible, in_header = strip_hidden_ixbrl_header(raw[:cut], in_header)
+                tail += clean_fragment(visible)
 
                 occurrences = find_all_occurrences(tail, phrases, max_candidates)
                 if len(occurrences) >= max_candidates:
