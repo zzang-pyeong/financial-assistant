@@ -421,6 +421,27 @@ def _action_label(action):
     return _ACTION_LABELS.get((action or "").strip().lower(), (action or "").strip() or "변경")
 
 
+# 증권사 "규모/인지도" 근사치 — 실제 애널리스트 트랙레코드(적중률 등)는 TipRanks 같은
+# 유료 데이터 없이는 알 수 없어서(사용자와 논의로 확정한 범위), 이름 인지도로만 대형
+# 글로벌 IB인지 판정한다. classify_fund_name(lib/ownership.py)과 같은 정적 키워드
+# 매칭 패턴 — 목록에 없으면 전부 "중소형·부티크"로 취급(안전한 기본값 방향).
+_BULGE_BRACKET_KEYWORDS = [
+    "goldman sachs", "morgan stanley", "jpmorgan", "j.p. morgan", "jp morgan",
+    "bank of america", "bofa", "merrill lynch", "citigroup", "citi", "barclays",
+    "credit suisse", "deutsche bank", "wells fargo", "hsbc", "mizuho", "nomura",
+    "ubs",
+]
+
+
+def classify_broker_tier(firm_name):
+    """firm_name이 대형 글로벌 IB 이름과 겹치면 "대형 IB", 아니면 "중소형·부티크(추정)".
+    규모·인지도 근사치일 뿐 실제 리서치 정확도와는 무관하다."""
+    name_l = (firm_name or "").lower()
+    if any(kw in name_l for kw in _BULGE_BRACKET_KEYWORDS):
+        return "대형 IB"
+    return "중소형·부티크(추정)"
+
+
 def summarize_price_target(finnhub_pt, yf_pt):
     """평균/최고/최저/중앙값 목표주가를 화면에 쓸 형태로 정리한다. Finnhub는 프리미엄
     전용이라 무료 키에서는 targetMean이 비어있는 게 보통이므로, 그럴 때만 yfinance로
@@ -452,14 +473,16 @@ def normalize_upgrade_downgrade(finnhub_rows, yf_rows, limit=15):
             rows.append({
                 "date": r.get("gradeTime"), "firm": r.get("company"),
                 "from_grade": r.get("fromGrade") or "", "to_grade": r.get("toGrade") or "",
-                "action_label": _action_label(r.get("action")), "source": "Finnhub",
+                "action_label": _action_label(r.get("action")),
+                "broker_tier": classify_broker_tier(r.get("company")), "source": "Finnhub",
             })
     elif yf_rows:
         for r in yf_rows:
             rows.append({
                 "date": r.get("date"), "firm": r.get("firm"),
                 "from_grade": r.get("from_grade") or "", "to_grade": r.get("to_grade") or "",
-                "action_label": _action_label(r.get("action")), "source": "Yahoo Finance",
+                "action_label": _action_label(r.get("action")),
+                "broker_tier": classify_broker_tier(r.get("firm")), "source": "Yahoo Finance",
             })
     rows.sort(key=lambda r: r["date"] or 0, reverse=True)
     return rows[:limit]

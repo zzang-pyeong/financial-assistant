@@ -61,12 +61,16 @@ if analyst_actions:
         pd.DataFrame([{
             "날짜": _date_str(a["date"]),
             "증권사": a["firm"] or "",
+            "증권사 규모": a["broker_tier"],
             "변경": a["action_label"],
             "등급": (f"{a['from_grade']} → {a['to_grade']}" if a["from_grade"] else a["to_grade"]),
         } for a in analyst_actions]),
         hide_index=True, use_container_width=True,
     )
-    st.caption(f"출처: {analyst_actions[0]['source']}.")
+    st.caption(
+        f"출처: {analyst_actions[0]['source']}. ⚠️ '증권사 규모'는 이름 인지도 기준 근사치일 "
+        "뿐 실제 리서치 적중률·트랙레코드가 아닙니다 — 대형 IB라고 항상 더 정확한 것은 아닙니다."
+    )
     st.divider()
 
 st.caption(
