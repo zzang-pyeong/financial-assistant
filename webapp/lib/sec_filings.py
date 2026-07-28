@@ -24,7 +24,6 @@ SPV라 투자 판단에 거의 안 쓰이는데(사용자 피드백), 회사당 
 법인 구조로 도배해 실제로 의미 있는 관계(공급·고객, 지분 보유)를 압도해버렸다.
 """
 
-import codecs
 import html
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,6 +31,8 @@ from datetime import date, datetime, timedelta
 
 import requests
 import streamlit as st
+
+from .filing_text import clean_fragment, stream_find_context
 
 _USER_AGENT = "EnterTicker research contact@example.com"
 _FORMS = "10-K,10-Q,8-K"
@@ -343,7 +344,7 @@ def _list_filing_documents(cik, accession):
         if not href_m:
             continue
         name = href_m.group(1).rsplit("/", 1)[-1]
-        doc_type = _clean_fragment(cells_html[3]).strip()
+        doc_type = clean_fragment(cells_html[3]).strip()
         if name:
             docs.append({"name": name, "type": doc_type})
     return docs
@@ -469,7 +470,7 @@ def _process_13d_13g_filing(cik, filing):
         return None
     try:
         r = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=15)
-        cleaned = _clean_fragment(r.text)
+        cleaned = clean_fragment(r.text)
     except Exception:
         return None
 
@@ -549,101 +550,24 @@ def find_beneficial_owners(ticker):
 # 그래서 (1) 스트리밍으로 받다가 회사명을 찾는 즉시 연결을 끊고 (2) 캐시는 결과 스니펫
 # (수백 바이트)만 (3) Streamlit에 의존하지 않는 평범한 dict으로 들고 있게 바꿨다.
 # ---------------------------------------------------------------------------
-_SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
-_ANY_TAG_RE = re.compile(r"<[^>]+>")
-
 # 그래프는 이제 상대기업을 전부 다 그리지만(lib/charts.py), 회사마다 공시 원문을 받아
 # 스니펫을 뽑는 건 시간이 걸려서(스트리밍이라 빨라도 요청 자체는 남음) 전체에 다 걸면
 # 페이지가 느려진다. 근거가 가장 많은 상위 N개에만 실제 문맥을 채우고, 나머지는 요약
 # 표에서 "원문 확인 필요" 안내로 자연스럽게 폴백된다(pages/8_관계도.py::_best_description).
 _MAX_SNIPPET_COMPANIES = 10
 
-# 스트리밍 중 이 크기를 넘게 읽었는데도 회사명을 한 번도 못 찾으면 포기한다(비정상적으로
-# 큰 첨부가 붙은 공시로부터 스스로를 보호). 실측상 회사명은 보통 앞쪽 수백 KB 안에 나온다.
-_MAX_FILING_BYTES = 6 * 1024 * 1024
-_STREAM_CHUNK = 64 * 1024
-
-# 여러 매칭 후보를 모으기 위한 상한 — 첫 매칭에서 바로 멈추던 것보다는 더 읽어야 한다.
-# 그래도 6MB 안전장치보다는 훨씬 작게 잡아서(실측상 사업설명은 문서 앞쪽에 나옴) 대부분의
-# 문서는 이 안에서 여러 매칭을 확보하고 끝난다. 이 안에서 하나도 못 찾은 극히 일부 문서만
-# _MAX_FILING_BYTES까지 계속 읽어 최소 1건은 건지려 한다(재현율 유지).
-_CANDIDATE_SCAN_BYTES = 1_500_000
-_MAX_CANDIDATES = 6
-
 # 스니펫 캐시 — 제출된 공시는 내용이 안 바뀌므로 (url, 회사명) → 스니펫은 영구히 유효하다.
-# st.cache_data 대신 평범한 dict을 쓰는 이유는 위 주석 (3)번(워커 스레드 호출) 때문.
+# st.cache_data 대신 평범한 dict을 쓰는 이유는 워커 스레드에서 호출되기 때문(st.cache_data는
+# 스크립트 실행 컨텍스트를 기대해서 ThreadPoolExecutor 워커에서 부르면 경고가 난다).
 _SNIPPET_CACHE = {}
 _SNIPPET_CACHE_MAX = 2000
 
+# 공시 스트리밍 fetch·HTML 정리·문장 경계 자르기 같은 범용 텍스트 처리는
+# lib/filing_text.py로 옮겼다(lib/financials.py의 경영진 코멘트 추출도 같은 로직이 필요해서
+# 중복 구현하지 않기 위함, 2026-07-28). 여기 남은 건 "어떤 문장이 그럴듯한 관계 설명인가"를
+# 판단하는 관계도 전용 스코어링뿐.
 
-def _clean_fragment(fragment):
-    """HTML 조각에서 태그를 벗기고 엔티티를 풀어 공백을 정규화한다."""
-    text = _SCRIPT_STYLE_RE.sub(" ", fragment)
-    text = _ANY_TAG_RE.sub(" ", text)
-    return re.sub(r"\s+", " ", html.unescape(text))
-
-
-def _safe_split_point(raw):
-    """조각 끝에 태그가 잘려 걸쳐 있으면(예: "...<td cla") 그 앞까지만 이번에 처리하고
-    나머지는 다음 조각과 이어 붙이도록, 안전하게 자를 수 있는 위치를 돌려준다.
-    이걸 안 하면 청크 경계에서 태그가 반토막 나 스니펫에 '<td class=' 같은 게 섞인다."""
-    last_open = raw.rfind("<")
-    if last_open == -1:
-        return len(raw)
-    # 마지막 '<' 뒤에 '>'가 있으면 그 태그는 이미 닫힌 것 — 통째로 처리해도 안전
-    return len(raw) if raw.find(">", last_open) != -1 else last_open
-
-
-# "관계도 표에 뭘 하는지 안 보인다"는 피드백 — 예전엔 매칭 지점 앞뒤로 고정 폭(±180자)만
-# 잘랐어서 "...etermination, the value of..." 처럼 단어 중간에서 끊긴 스니펫이 나왔다.
-# 문장 경계에서 자르면 훨씬 읽을 만해진다. 마침표 뒤에 대문자/인용부호가 오는 지점만
-# 문장 끝으로 인정해 "Inc."·"U.S." 같은 약어의 마침표를 오판할 여지를 조금 줄인다 —
-# 완벽하진 않지만(약어 뒤에 대문자 문장이 바로 오면 여전히 오판 가능), 고정폭 절단보다는
-# 항상 낫다.
-_SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"‘“])')
-_MAX_SENTENCE_CHARS = 320
-
-
-def _trim_to_sentence(text, match_start, match_len):
-    """text 안에서 [match_start, match_start+match_len) 구간(회사명)을 포함하는 문장만
-    골라 반환한다. (문장, 시작이_잘렸는지, 끝이_잘렸는지) 튜플 — 잘림 여부는 호출부가
-    "…" 표시 여부를 정하는 데 쓴다. 문장 경계를 못 찾으면(text 끝까지 가도 없음)
-    text 전체를 잘린 것으로 간주해 반환."""
-    bounds = [0] + [m.end() for m in _SENTENCE_BOUNDARY_RE.finditer(text)] + [len(text)]
-    match_end = match_start + match_len
-    for i in range(len(bounds) - 1):
-        s, e = bounds[i], bounds[i + 1]
-        if s <= match_start < e:
-            # 회사명이 문장 경계 판정 지점을 걸쳐 있으면(약어 오판 등) 다음 문장까지 합친다
-            while e < match_end and i + 1 < len(bounds) - 1:
-                i += 1
-                e = bounds[i + 1]
-            return text[s:e].strip(), s == 0, e == len(text)
-    return text.strip(), True, True
-
-
-def _find_all_occurrences(tail, phrases, max_candidates):
-    """tail 안에서 phrases 중 하나라도 매칭되는 지점을 등장 순서대로 최대 max_candidates개
-    찾아 [(위치, 매칭길이), ...]로 반환. 여러 매칭 후보를 모아 그중 가장 그럴듯한 문장을
-    고르기 위한 것(아래 _score_sentence 참고) — 예전엔 첫 매칭에서 바로 멈췄다."""
-    lowered = [(p, p.lower()) for p in phrases]
-    low = tail.lower()
-    found = []
-    search_from = 0
-    while len(found) < max_candidates:
-        best = None
-        for phrase, phrase_low in lowered:
-            idx = low.find(phrase_low, search_from)
-            if idx != -1 and (best is None or idx < best[0]):
-                best = (idx, len(phrase))
-        if best is None:
-            break
-        found.append(best)
-        search_from = best[0] + best[1]
-    return found
-
-
-# "관계도 표에 뭘 하는지 안 보인다"는 피드백에 문장 경계 정리(위)로 가독성은 나아졌지만,
+# "관계도 표에 뭘 하는지 안 보인다"는 피드백에 문장 경계 정리로 가독성은 나아졌지만,
 # 정확도 자체는 별개 문제였다 — 첫 매칭 문장이 실제 거래 내용이 아니라 Risk Factors의
 # 경쟁사 나열이나 소송 상대 언급인 경우가 흔했다(실측: RDW 검색 시 BA/NOC 매칭이 전부
 # "we compete against ... including Airbus" 같은 경쟁사 나열이었음). 여러 매칭 후보를
@@ -687,72 +611,6 @@ def _score_sentence(sentence, tail, pos):
     return score
 
 
-def _stream_find_context(url, phrases, window=260):
-    """공시 문서를 스트리밍으로 받으며 phrases가 나오는 지점을 최대 _MAX_CANDIDATES개까지
-    모아(최대 _CANDIDATE_SCAN_BYTES, 하나도 못 찾았으면 _MAX_FILING_BYTES까지 계속),
-    그중 _score_sentence로 가장 그럴듯한 문장을 골라 반환한다. 못 찾으면 None.
-
-    예전엔 첫 매칭에서 바로 멈췄는데, 그러면 실제 거래 내용이 아니라 아무 문맥이나
-    뽑히기 쉬웠다(위 _score_sentence 설명 참조). 여러 후보를 모으려면 더 읽어야 해서
-    예전보다 느리다 — 첫 매칭 지점에서 바로 끊던 것과 다른 트레이드오프."""
-    if not phrases:
-        return None
-
-    tail = ""
-    carry = ""
-    total = 0
-    occurrences = []
-
-    try:
-        with requests.get(
-            url, headers={"User-Agent": _USER_AGENT}, timeout=15, stream=True,
-        ) as r:
-            # 멀티바이트 문자가 청크 경계에 걸쳐 깨지지 않도록 증분 디코더 사용
-            decoder = codecs.getincrementaldecoder(r.encoding or "utf-8")(errors="ignore")
-            for chunk in r.iter_content(chunk_size=_STREAM_CHUNK):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                raw = carry + decoder.decode(chunk)
-                cut = _safe_split_point(raw)
-                carry = raw[cut:]
-                tail += _clean_fragment(raw[:cut])
-
-                occurrences = _find_all_occurrences(tail, phrases, _MAX_CANDIDATES)
-                if len(occurrences) >= _MAX_CANDIDATES:
-                    break
-                if occurrences and len(tail) >= _CANDIDATE_SCAN_BYTES:
-                    break
-                if total > _MAX_FILING_BYTES:
-                    break
-    except Exception:
-        return None
-
-    if not occurrences:
-        return None
-
-    candidates = []
-    for found_at, found_len in occurrences:
-        start = max(0, found_at - window)
-        end = min(len(tail), found_at + found_len + window)
-        raw = tail[start:end]
-        sentence, start_cut, end_cut = _trim_to_sentence(raw, found_at - start, found_len)
-        if len(sentence) > _MAX_SENTENCE_CHARS:
-            # 문장 하나가 너무 길면(법률 문서 특유의 장문) 단어 경계에서 자른다 — 그래도
-            # 통째로 한 문장이라 예전 고정폭 절단보다는 훨씬 자연스럽게 끝난다. 말줄임표는
-            # 아래에서 한 번만 붙이므로 여기서는 자르기만 한다(안 그러면 "…"가 두 번 붙음).
-            sentence = sentence[:_MAX_SENTENCE_CHARS].rsplit(" ", 1)[0].rstrip(",;:")
-            end_cut = True
-        candidates.append((sentence, start_cut, end_cut, found_at))
-
-    sentence, start_cut, end_cut, _pos = max(
-        candidates, key=lambda c: _score_sentence(c[0], tail, c[3]),
-    )
-    prefix = "…" if start_cut else ""
-    suffix = "…" if end_cut else ""
-    return prefix + sentence + suffix
-
-
 def _extract_context_snippet(url, company_name, window=260):
     """문서에서 회사명 주변 문맥을 뽑아 반환. 정식 법인명부터 순서대로 시도해 가장 구체적인
     표기를 우선 채택한다(검색 때 어떤 축약 단계로 매칭됐는지와 무관하게, 문서 안에 실제로
@@ -761,7 +619,10 @@ def _extract_context_snippet(url, company_name, window=260):
     if key in _SNIPPET_CACHE:
         return _SNIPPET_CACHE[key]
 
-    snippet = _stream_find_context(url, _filing_search_candidates(company_name), window)
+    snippet = stream_find_context(
+        url, _filing_search_candidates(company_name),
+        score_sentence=_score_sentence, user_agent=_USER_AGENT, window=window,
+    )
 
     if len(_SNIPPET_CACHE) >= _SNIPPET_CACHE_MAX:
         for k in list(_SNIPPET_CACHE)[: _SNIPPET_CACHE_MAX // 5]:

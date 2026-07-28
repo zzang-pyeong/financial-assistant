@@ -93,6 +93,33 @@ def get_insider_transactions(ticker):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def get_yf_income_stmt(ticker, quarterly=False):
+    try:
+        t = yf.Ticker(ticker)
+        return t.quarterly_income_stmt if quarterly else t.income_stmt
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_yf_balance_sheet(ticker, quarterly=False):
+    try:
+        t = yf.Ticker(ticker)
+        return t.quarterly_balance_sheet if quarterly else t.balance_sheet
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_yf_cashflow(ticker, quarterly=False):
+    try:
+        t = yf.Ticker(ticker)
+        return t.quarterly_cashflow if quarterly else t.cashflow
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_business_summary(ticker):
     info = get_yf_info(ticker)
     return (info.get("longBusinessSummary") or "").lower()

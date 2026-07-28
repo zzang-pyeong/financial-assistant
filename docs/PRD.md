@@ -39,7 +39,8 @@ Conflict Board는 제품 전체가 아니라 탐색의 시작점이며, 사용�
 기업명/티커 검색
   → Conflict Board에서 핵심 쟁점 파악
   → 관심 축 선택
-     (차트 / Peer Compare / Ownership Map / Analyst News / Company Events / Options Data / Connection Map)
+     (차트 / Financial Statements / Peer Compare / Ownership Map / Analyst News / Company Events /
+      Options Data / Connection Map)
   → 근거와 원문을 확인하거나 다른 종목 검색
 ```
 
@@ -47,6 +48,8 @@ Conflict Board는 제품 전체가 아니라 탐색의 시작점이며, 사용�
 
 - Conflict Board: 이 종목의 상승·하락 논점은 무엇인가?
 - Price Chart: 가격 흐름과 거래량은 어떤 모습인가?
+- Financial Statements: 매출·마진·CapEx 등 핵심 재무 지표는 어떻게 변해왔고, 그 변화의
+  배경을 회사가 실제로 밝힌 적이 있는가?
 - Peer Compare: 유사 기업과 밸류에이션·재무 특성이 어떻게 다른가?
 - Ownership Map: 기관·내부자·공매도·유통주식 관련 수급 구조는 어떤가?
 - Analyst News: 최근 애널리스트 의견 관련 보도는 무엇인가?
@@ -63,6 +66,12 @@ Connection Map은 관계마다 근거의 성격과, 확인된 경우의 방향�
 관계 유형이 불분명한 항목은 기본 화면에서 숨기고, 토글을 켜야만 노출된다. 근거 개수나
 관계 유형으로 강도·투자 매력도를 점수화하지 않는다. (자회사 목록은 대상에서 제외한다
 — 대부분 투자 판단과 무관한 지주회사·SPV 구조라 관계도를 법인 구조로 압도해버린다.)
+
+Financial Statements의 "경영진 코멘트"는 회사가 실적발표 8-K(보도자료·CFO Commentary 등)에서
+실제로 밝힌 문장, 또는 발표성 뉴스 기사를 그대로 인용한 것이다. 항목당 고정된 개수를
+채우지 않는다 — 실제로 근거를 찾은 만큼만(0개일 수도 있음) 보여주고, 없으면 "공개된 설명
+없음"으로 정직하게 비워둔다. 회사가 이런 문서를 공개하지 않았거나(특히 자산경량 업종),
+공개했어도 구체적인 설명이 없는 경우가 흔하며 그게 정상이다 — 지어내지 않는다.
 
 ## 데이터 신뢰성 원칙
 

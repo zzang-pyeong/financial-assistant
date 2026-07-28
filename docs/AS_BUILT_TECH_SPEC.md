@@ -258,7 +258,8 @@ data URI는 Streamlit이 rerun마다 그림 JSON에 담아 브라우저로 보�
 함께 적용한다. **노드 크기는 근거 수와 무관하게 전부 같다** — 크기로 굵기를 주면
 "근거가 많다 = 관계가 더 확실하다"로 읽히는데 그건 하지 않기로 한 집계다.
 
-**조작은 hover만 남기고 전부 끈다** (`RELATIONSHIP_PLOTLY_CONFIG`): 휠 확대·툴바·드래그·
+**조작은 hover만 남기고 전부 끈다** (`STATIC_PLOTLY_CONFIG` — 2026-07-28에 재무제표
+차트와 공용으로 쓰도록 이름을 일반화, 이전 이름 `RELATIONSHIP_PLOTLY_CONFIG`): 휠 확대·툴바·드래그·
 더블클릭 확대를 끄고 두 축 모두 `fixedrange=True`로 잠근다. 원래는 가격 차트와 같은
 `PLOTLY_CONFIG`(`scrollZoom=True`, `dragmode="pan"`)를 공유했는데, 근거 표가 그래프 아래에
 있어 스크롤이 정상 경로인데도 커서가 그래프 위에 있으면 휠이 페이지 스크롤 대신 그래프

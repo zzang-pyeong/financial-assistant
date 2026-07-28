@@ -12,7 +12,7 @@
 import sys
 sys.path.insert(0, "webapp")
 
-from lib import sec_filings
+from lib import sec_filings, filing_text
 
 # --- 가짜 10-K 만들기: 앞쪽 200KB 잡동사니 → 계약 문단 → 뒤쪽 6MB 부록 -------------
 FILLER_HEAD = "<p>Item 1A. Risk Factors. " + ("Boilerplate language about market conditions. " * 4000) + "</p>"
@@ -70,7 +70,7 @@ snippet = sec_filings._extract_context_snippet(
 )
 read_mb = last_response["r"].bytes_read / 1024 / 1024
 total_mb = len(FAKE_10K.encode()) / 1024 / 1024
-cap_mb = sec_filings._CANDIDATE_SCAN_BYTES / 1024 / 1024
+cap_mb = filing_text._CANDIDATE_SCAN_BYTES / 1024 / 1024
 assert snippet, "스니펫을 못 뽑음"
 print(f"\n1) 스캔 상한: 전체 {total_mb:.1f}MB 중 {read_mb:.2f}MB만 읽고 중단 "
       f"({read_mb/total_mb*100:.1f}%, 상한 {cap_mb:.1f}MB)")
@@ -116,14 +116,14 @@ print("\n전부 통과")
 # 6a) 문장이 앞뒤로 온전히 들어있으면 잘림 표시 없이 그 문장 그대로 나오는지
 text = "Filler before. In 2028, the Company will supply Widget Corp with parts. Filler after."
 match_start = text.index("Widget Corp")
-sentence, start_cut, end_cut = sec_filings._trim_to_sentence(text, match_start, len("Widget Corp"))
+sentence, start_cut, end_cut = filing_text.trim_to_sentence(text, match_start, len("Widget Corp"))
 assert sentence == "In 2028, the Company will supply Widget Corp with parts.", f"문장이 안 맞음: {sentence!r}"
 assert not start_cut and not end_cut, f"온전한 문장인데 잘림으로 표시됨: {start_cut}, {end_cut}"
 print(f"6a) 문장 경계 추출 OK: {sentence!r}")
 
 # 6b) 회사명 앞에 문장 경계가 전혀 없으면(창 시작까지 이어짐) 시작이 잘린 것으로 표시되는지
 frag = "no boundary before this point Widget Corp with parts. Filler after."
-sentence2, start_cut2, end_cut2 = sec_filings._trim_to_sentence(
+sentence2, start_cut2, end_cut2 = filing_text.trim_to_sentence(
     frag, frag.index("Widget Corp"), len("Widget Corp"),
 )
 assert start_cut2, "문장 시작을 못 찾았는데 잘림 표시가 안 됨"
@@ -137,7 +137,7 @@ long_sentence = (
     "In 2028 the Company will " + ("supply many widgets and various components " * 10)
     + "to Widget Corp under the terms described herein."
 )
-assert len(long_sentence) > sec_filings._MAX_SENTENCE_CHARS, "테스트 문장이 상한보다 짧음"
+assert len(long_sentence) > filing_text._MAX_SENTENCE_CHARS, "테스트 문장이 상한보다 짧음"
 LONG_DOC = "<p>Filler. " + long_sentence + " More filler after.</p>"
 
 def fake_get_long(url, **kwargs):
@@ -147,15 +147,17 @@ def fake_get_long(url, **kwargs):
     return resp
 
 sec_filings.requests.get = fake_get_long
-sentence3 = sec_filings._stream_find_context(
-    "http://fake/long.htm", ["Widget Corp"], window=len(LONG_DOC),
+sentence3 = filing_text.stream_find_context(
+    "http://fake/long.htm", ["Widget Corp"],
+    score_sentence=sec_filings._score_sentence, user_agent=sec_filings._USER_AGENT,
+    window=len(LONG_DOC),
 )
 sec_filings.requests.get = fake_get  # 이후 테스트를 위해 원래 fake로 복원
 assert sentence3, "긴 문장에서 스니펫을 못 뽑음"
 assert not sentence3.startswith("…"), f"경계를 다 잡았는데 시작이 잘림으로 표시됨: {sentence3!r}"
 assert sentence3.endswith("…"), f"상한을 넘었는데 말줄임이 안 붙음: {sentence3!r}"
 assert not sentence3[:-1].endswith(" "), f"단어 중간이 아니라 공백 경계에서 잘려야 함: {sentence3[-20:]!r}"
-assert len(sentence3) <= sec_filings._MAX_SENTENCE_CHARS + 1, f"상한보다 길게 남음: {len(sentence3)}자"
+assert len(sentence3) <= filing_text._MAX_SENTENCE_CHARS + 1, f"상한보다 길게 남음: {len(sentence3)}자"
 print(f"6c) 긴 문장 상한 절단 OK ({len(sentence3)}자): 끝부분 {sentence3[-40:]!r}")
 
 print("\n문장 경계 다듬기 전부 통과")

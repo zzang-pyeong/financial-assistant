@@ -22,18 +22,25 @@ INTRADAY_OPTIONS = {
 _UP_COLOR = "#e74c3c"
 _DOWN_COLOR = "#3498db"
 
+# Streamlit의 기본 plotly 테마가 축 눈금·범례 글자를 옅은 회색으로 렌더링해 화면에서
+# 흐리게 보인다는 피드백(2026-07-28) — 모든 차트 공통으로 진한 색을 명시해서 선명하게 한다.
+CHART_TEXT_COLOR = "#1f2937"
+
 # 타 증권사 앱처럼 클릭+드래그로 차트를 이동(pan)할 수 있게 — 기본값(zoom 박스선택) 대신.
 # scrollZoom은 마우스 휠로 확대/축소, displaylogo는 plotly 로고 제거.
-# ⚠️ 이건 가격 차트 전용이다. 관계도는 아래 RELATIONSHIP_PLOTLY_CONFIG를 쓴다.
+# ⚠️ 이건 가격 차트 전용이다(스크롤로 확대해서 보는 용도가 실제로 있음). 조작이 필요 없는
+# 차트(관계도, 재무제표 막대그래프)는 아래 STATIC_PLOTLY_CONFIG를 쓴다.
 PLOTLY_CONFIG = {"scrollZoom": True, "displaylogo": False}
 
-# 관계도 전용 — 조작을 전부 끄고 hover만 남긴다.
-# 이유: 관계도는 그래프 아래에 근거 표가 길게 붙어서 사용자가 반드시 스크롤을 내려야 하는데,
-# 커서가 그래프 위에 있는 동안 휠을 굴리면 페이지가 안 내려가고 그래프가 확대/축소돼 버렸다
-# (가격 차트와 같은 config를 공유하고 있었던 탓). 관계도는 확대·이동해서 볼 이유도 없다 —
-# 노드가 10개뿐이고 좌표에 의미가 없다(원형 배치는 그냥 배치일 뿐).
+# 조작이 필요 없는 차트 전용(관계도·재무제표 추이 등) — 조작을 전부 끄고 hover만 남긴다.
+# 원래 관계도 전용으로 만들었다(RELATIONSHIP_PLOTLY_CONFIG라는 이름이었음, 2026-07-28에
+# 일반화): 관계도는 그래프 아래에 근거 표가 길게 붙어서 사용자가 반드시 스크롤을 내려야
+# 하는데, 커서가 그래프 위에 있는 동안 휠을 굴리면 페이지가 안 내려가고 그래프가
+# 확대/축소돼 버렸다(가격 차트와 같은 config를 공유하고 있었던 탓). 좌표·확대에 의미가
+# 없는 차트라면 어디든 같은 문제가 재현되므로(예: 재무제표 막대그래프), 이름을 일반화해
+# 재사용한다.
 # staticPlot=True로 하면 hover까지 죽어서 쓸 수 없다 — 개별 옵션으로 끈다.
-RELATIONSHIP_PLOTLY_CONFIG = {
+STATIC_PLOTLY_CONFIG = {
     "scrollZoom": False,        # 휠은 페이지 스크롤로 넘긴다(이 문제의 직접 원인)
     "displayModeBar": False,    # 확대·저장 등 툴바 자체를 숨김
     "displaylogo": False,
@@ -89,6 +96,24 @@ def render_price_chart_figure(df, period_days=None):
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         dragmode="pan",
+        font=dict(color=CHART_TEXT_COLOR),
+    )
+    return fig
+
+
+def render_bar_chart_figure(series, color="#2f6fed"):
+    """연도별 막대그래프(재무제표 추이용) — st.bar_chart 대신 plotly로 그려서
+    STATIC_PLOTLY_CONFIG(스크롤·확대 비활성화)와 진한 글자색을 다른 차트와 통일한다."""
+    fig = go.Figure(go.Bar(
+        x=[p.strftime("%Y") for p in series.index], y=series.values, marker_color=color,
+    ))
+    fig.update_layout(
+        height=280,
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(color=CHART_TEXT_COLOR),
+        xaxis=dict(fixedrange=True, tickfont=dict(color=CHART_TEXT_COLOR)),
+        yaxis=dict(fixedrange=True, tickfont=dict(color=CHART_TEXT_COLOR)),
+        dragmode=False,
     )
     return fig
 
@@ -573,7 +598,7 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, se
         fig.add_annotation(
             x=label_radius * math.cos(angle), y=label_radius * math.sin(angle),
             xref="x", yref="y", text=sector_name, showarrow=False,
-            font=dict(size=11, color="#6b7280"),
+            font=dict(size=11, color=CHART_TEXT_COLOR),
             bgcolor="rgba(255,255,255,0.85)", borderpad=2,
         )
 
@@ -591,10 +616,11 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, se
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.01, x=0.5, xanchor="center",
-            font=dict(size=11), bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11, color=CHART_TEXT_COLOR), bgcolor="rgba(0,0,0,0)",
         ),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         dragmode=False,  # 드래그로 이동/영역선택하는 동작 제거 (hover는 그대로 살아있다)
-        hoverlabel=dict(align="left", bgcolor="white", font=dict(size=12)),
+        hoverlabel=dict(align="left", bgcolor="white", font=dict(size=12, color=CHART_TEXT_COLOR)),
+        font=dict(color=CHART_TEXT_COLOR),
     )
     return fig

@@ -157,7 +157,7 @@ print("13) 로고 없을 때 폴백(빈 원) OK — 이미지 0개, 원은 그�
 print("\n로고 관련 전부 통과")
 
 # --- 14) hover 줄바꿈 + 조작 비활성화 (2026-07-27, 실제 스크린샷 이슈) --------------------
-from lib.charts import _wrap_hover, _display_width, _HOVER_WIDTH, RELATIONSHIP_PLOTLY_CONFIG
+from lib.charts import _wrap_hover, _display_width, _HOVER_WIDTH, STATIC_PLOTLY_CONFIG
 
 # 사용자 스크린샷에서 잘려 나온 실제 유형의 문장(공시 발췌문, 공백은 있지만 아주 긴 한 줄)
 long_line = ("…display and other products. The Display segment includes products for "
@@ -195,9 +195,9 @@ assert not bad, f"hover에 폭 초과 줄이 있음: {bad[:1]}"
 print(f"17) 그래프 hover {len(node_trace.hovertext)}개 전부 폭 상한 준수 OK")
 
 # 조작 비활성화 — 휠 확대 끄고 hover는 살아있어야 함
-assert RELATIONSHIP_PLOTLY_CONFIG["scrollZoom"] is False, "휠 확대가 여전히 켜져 있음"
-assert RELATIONSHIP_PLOTLY_CONFIG["displayModeBar"] is False, "툴바가 안 숨겨짐"
-assert RELATIONSHIP_PLOTLY_CONFIG.get("staticPlot") is not True, "staticPlot이면 hover도 죽는다"
+assert STATIC_PLOTLY_CONFIG["scrollZoom"] is False, "휠 확대가 여전히 켜져 있음"
+assert STATIC_PLOTLY_CONFIG["displayModeBar"] is False, "툴바가 안 숨겨짐"
+assert STATIC_PLOTLY_CONFIG.get("staticPlot") is not True, "staticPlot이면 hover도 죽는다"
 assert fig.layout.dragmode is False, f"dragmode가 안 꺼짐: {fig.layout.dragmode}"
 assert fig.layout.xaxis.fixedrange is True and fig.layout.yaxis.fixedrange is True, \
     "축 확대가 안 막힘"

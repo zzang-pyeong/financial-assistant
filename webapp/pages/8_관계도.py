@@ -12,7 +12,7 @@ from lib.page_helpers import require_analysis, inject_base_styles, render_wordma
 from lib.search import render_sidebar
 from lib.charts import (
     render_relationship_graph_figure, group_relationship_edges,
-    RELATIONSHIP_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
+    STATIC_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
 )
 from lib.known_companies import STATIC_KNOWN_COMPANIES
 from lib.sec_filings import (
@@ -256,7 +256,7 @@ st.plotly_chart(
         ticker, hub_name, visible_edges,
         logos=st.session_state.get("relationship_logos", {}), sectors=sectors,
     ),
-    use_container_width=True, config=RELATIONSHIP_PLOTLY_CONFIG,
+    use_container_width=True, config=STATIC_PLOTLY_CONFIG,
 )
 caption = (
     "노드에 마우스를 올리면 요약이 보입니다. 화살표는 방향이 공식 근거로 확인된 관계에만 "
