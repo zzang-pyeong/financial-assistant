@@ -103,11 +103,68 @@ def render_info_cards(cards):
 
 
 def require_analysis():
-    """상세 데이터 하위 페이지: 아직 조회 전이면 메인 페이지로 안내하고 중단."""
+    """상세 데이터 하위 페이지: 아직 조회 전이면 메인 페이지로 안내하고 중단.
+    여기를 통과했다는 건 사이드바 페이지 링크(또는 미니 검색창·관계도 노드 클릭)로 실제
+    이동했다는 뜻이라, 사이드바 발견성 화살표(render_sidebar_discovery_arrow)를 다시 안
+    보이게 하는 "완료" 표시를 이 한 곳에서만 남긴다 — 8개 서브페이지 각각에 따로 심지
+    않아도 전부 커버된다."""
     if "peer_data" not in st.session_state:
         st.info("Search a ticker on the main page first.")
         st.page_link("app.py", label="← Back to Search", icon="🏠")
         st.stop()
+    st.session_state["sidebar_discovery_completed"] = True
+
+
+def render_sidebar_discovery_arrow():
+    """검색 직후 첫 분석 홈 화면에서만, 사이드바 메뉴 영역을 가리키는 1회성 펄스 화살표를
+    보여준다 — 사이드바는 그대로 두고(본문에 메뉴 반복 배치 안 함), 처음 온 사용자가
+    "왼쪽에 메뉴가 있다"는 것만 한 번 학습하게 하는 용도. 문구·말풍선·모달은 안 붙인다
+    (원칙: 상시 도움말 없음). 특정 메뉴를 가리키지 않고 메뉴 영역 전체를 가리킨다.
+
+    세션 안에서 최초 1회만 렌더링한다 — require_analysis()가 사이드바 페이지 이동을
+    감지하면 sidebar_discovery_completed를 세우고, 그게 없어도 이 함수가 한 번
+    렌더되는 순간 sidebar_discovery_shown을 세워서(아직 메뉴를 안 눌렀어도) 같은 방문
+    중 홈 화면이 다른 이유로 다시 그려질 때 애니메이션이 처음부터 재생되는 걸 막는다.
+
+    ⚠️ localStorage 없이 st.session_state만 쓴다 — 새로고침하면 다시 보일 수 있지만,
+    이 프로젝트는 세션 간 영속화를 의도적으로 안 하는 선례가 이미 있고(search_history),
+    이 기능도 "첫인상 발견성" 목적상 새로고침 후 한 번 더 보이는 정도는 치명적이지
+    않다고 판단해 새 의존성(streamlit-javascript 등) 추가 없이 이 범위로 한정했다."""
+    if st.session_state.get("sidebar_discovery_completed"):
+        return
+    if st.session_state.get("sidebar_discovery_shown"):
+        return
+    st.session_state["sidebar_discovery_shown"] = True
+
+    # 실제 렌더링을 좌표로 재서 맞췄다(기본 폭 사이드바 기준): 사이드바 오른쪽 끝이
+    # x=300px, 본문 컬럼이 x=380px부터 시작해서 그 사이 80px는 원래 빈 여백이라 뭘
+    # 놓아도 사이드바·본문 어느 쪽과도 안 겹친다. 세로는 메뉴 링크 목록이 시작하는
+    # y=248px에 맞춰서, "↖"가 메뉴 목록 시작점을 짚고 위쪽(사이드바 전체)을 가리키게
+    # 했다. ⚠️ 사이드바를 사용자가 리사이즈했거나 뷰포트가 많이 다르면 어긋날 수 있음
+    # (반응형 접힘은 이번 범위에서 고려 안 함, 데스크톱 기준 근사치).
+    st.markdown(
+        "<style>"
+        "@keyframes sidebar-discovery-pulse {"
+        "  0%, 100% { opacity: 0.72; transform: translate(0, 0) scale(1); }"
+        "  50% { opacity: 1; transform: translate(-6px, -4px) scale(1.08); }"
+        "}"
+        "@keyframes sidebar-discovery-fadeout {"
+        "  from { opacity: 1; } to { opacity: 0; visibility: hidden; }"
+        "}"
+        ".sidebar-discovery-arrow {"
+        "  position: fixed; top: 250px; left: 316px; z-index: 999;"
+        "  font-size: 2rem; font-weight: 700; line-height: 1;"
+        "  color: #2f6fed; pointer-events: none;"
+        "  animation: sidebar-discovery-pulse 1.15s ease-in-out 4,"
+        "             sidebar-discovery-fadeout 0.4s ease-in 4.6s 1 forwards;"
+        "}"
+        "@media (prefers-reduced-motion: reduce) {"
+        "  .sidebar-discovery-arrow { animation: none; opacity: 0.85; }"
+        "}"
+        "</style>"
+        "<div class='sidebar-discovery-arrow'>↖</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def news_date_str(n):

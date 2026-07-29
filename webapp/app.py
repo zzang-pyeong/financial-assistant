@@ -10,6 +10,7 @@ sys.path.append(str(Path(__file__).parent))
 from lib._shared_core.peers import format_pct
 from lib._shared_core.page_helpers import (
     inject_base_styles, render_wordmark, render_ticker_header, render_info_cards,
+    render_sidebar_discovery_arrow,
 )
 from lib._shared_core.search import fetch_and_store_ticker, render_sidebar
 
@@ -67,6 +68,7 @@ def render_company_intro(ticker, info):
     많아서 넣었다. 회사 창업연도는 yfinance에 필드 자체가 없어 상장일
     (firstTradeDateMilliseconds)로 대체했고, CEO 취임/교체 시점도 데이터가 없어
     이름·직함만 표시한다(추측해서 채우지 않음)."""
+    render_sidebar_discovery_arrow()
     render_ticker_header(ticker)
     st.divider()
 
