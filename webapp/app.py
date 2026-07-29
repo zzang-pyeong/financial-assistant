@@ -11,7 +11,6 @@ from lib._shared_core.peers import format_pct
 from lib._shared_core.page_helpers import (
     inject_base_styles, render_wordmark, render_ticker_header, render_info_cards,
 )
-from lib._shared_core.charts import render_market_cap_share_figure, STATIC_PLOTLY_CONFIG
 from lib._shared_core.search import fetch_and_store_ticker, render_sidebar
 
 _SENTENCE_BOUNDARY_RE = re.compile(r'(?<=[.!?])\s+(?=[A-Z"‘“])')
@@ -62,40 +61,6 @@ def _first_sentence(text):
     return sentence
 
 
-def render_market_cap_share(ticker, info):
-    """대상 종목이 동종업계(Peer Compare의 Tier1 판정과 동일한 기준)에서 시가총액 기준
-    어느 정도 비중을 차지하는지 — "그 섹터에서 차지하고 있는 파이" 요청에 대한 답.
-    ⚠️ 이건 업종 전체 매출 기준 "시장점유율"이 아니라, Finnhub이 제시한 peer 후보 중
-    동일산업으로 판정된 것들(Tier1)만 모수로 한 시가총액 비중이다 — Peer Compare
-    페이지가 쓰는 것과 완전히 같은 Tier1 집합이라 두 페이지 숫자가 어긋나지 않는다.
-    Tier1이 비어있으면(예: AAPL처럼 동급 미국 상장사가 희소한 경우, 이전에 실측 확인)
-    억지로 채우지 않고 그 사실 자체를 캡션으로 알린다."""
-    target_cap = info.get("marketCap")
-    peer_data = st.session_state.get("peer_data")
-    tier1_peers = [
-        p for p in (peer_data["peers"] if peer_data else [])
-        if p["tier"] == 1 and isinstance(p.get("marketCap"), (int, float))
-    ]
-    if not isinstance(target_cap, (int, float)):
-        return
-    if not tier1_peers:
-        st.caption("🥧 동종업계 시가총액 비중: 판정된 Tier1 peer 없음 — 비교 대상 부족")
-        return
-
-    st.plotly_chart(
-        render_market_cap_share_figure(ticker, target_cap, tier1_peers),
-        use_container_width=True, config=STATIC_PLOTLY_CONFIG,
-    )
-    total = target_cap + sum(p["marketCap"] for p in tier1_peers)
-    share_pct = target_cap / total * 100
-    sample_note = "" if len(tier1_peers) >= 3 else f" (n={len(tier1_peers)}, 표본 부족)"
-    st.caption(
-        f"🥧 동종업계(Tier1 peer {len(tier1_peers)}개) 시가총액 합계 대비 {ticker} 비중 "
-        f"**{share_pct:.1f}%**{sample_note} — 업종 전체 매출 기준 시장점유율이 아니라 "
-        "Peer Compare의 Tier1 판정 기준 시가총액 비중입니다."
-    )
-
-
 def render_company_intro(ticker, info):
     """검색 직후 첫 화면 — Conflict Board를 걷어내고 그 자리를 대신한다(2026-07-28).
     다 아는 회사(AAPL/NVDA 등)도 직원 수·배당정책·CEO 이름 같은 건 의외로 모르는 경우가
@@ -136,8 +101,6 @@ def render_company_intro(ticker, info):
         (div_label, div_value, div_sub),
         ("상장일", listed),
     ])
-
-    render_market_cap_share(ticker, info)
 
     hq = ", ".join(p for p in [info.get("city"), info.get("state"), info.get("country")] if p)
     ceo = _find_ceo(info.get("companyOfficers"))
