@@ -116,10 +116,18 @@ def require_analysis():
 
 
 def render_sidebar_discovery_arrow():
-    """검색 직후 첫 분석 홈 화면에서만, 사이드바 메뉴 영역을 가리키는 1회성 펄스 화살표를
-    보여준다 — 사이드바는 그대로 두고(본문에 메뉴 반복 배치 안 함), 처음 온 사용자가
-    "왼쪽에 메뉴가 있다"는 것만 한 번 학습하게 하는 용도. 문구·말풍선·모달은 안 붙인다
-    (원칙: 상시 도움말 없음). 특정 메뉴를 가리키지 않고 메뉴 영역 전체를 가리킨다.
+    """검색 직후 첫 분석 홈 화면에서만, 사이드바를 펼치는 스트림릿 네이티브 ">>" 버튼
+    (좌측 상단)이 잠깐 반짝이게 한다.
+
+    처음엔 본문에 직접 화살표를 그려 고정 좌표로 사이드바 쪽을 가리키게 했는데, 사이드바가
+    기본적으로 접혀 있는 화면(실측: 사용자 스크린샷 — 좁은 뷰포트/배포 환경에서 기본 접힘)
+    에서는 그 좌표가 그냥 본문 한복판이라 화살표가 본문 텍스트 위에 떠 있는 것처럼
+    보였다(사용자 피드백, 2026-07-29). 좌표를 다시 잡는 대신, 스트림릿이 이미 정확한
+    위치에 그려주는 네이티브 펼치기 버튼 자체를 스타일링한다 — 사이드바가 펼쳐져 있든
+    접혀 있든, 뷰포트가 뭐든 좌표 계산 없이 항상 맞는 자리에서 반짝인다. 사이드바가 이미
+    펼쳐져 있으면 이 버튼 자체가 DOM에 없어서 조용히 아무 효과도 없다(그럴 땐 메뉴가 이미
+    보이니 안내가 필요 없다).
+    문구·말풍선·모달은 안 붙인다(원칙: 상시 도움말 없음).
 
     세션 안에서 최초 1회만 렌더링한다 — require_analysis()가 사이드바 페이지 이동을
     감지하면 sidebar_discovery_completed를 세우고, 그게 없어도 이 함수가 한 번
@@ -136,33 +144,23 @@ def render_sidebar_discovery_arrow():
         return
     st.session_state["sidebar_discovery_shown"] = True
 
-    # 실제 렌더링을 좌표로 재서 맞췄다(기본 폭 사이드바 기준): 사이드바 오른쪽 끝이
-    # x=300px, 본문 컬럼이 x=380px부터 시작해서 그 사이 80px는 원래 빈 여백이라 뭘
-    # 놓아도 사이드바·본문 어느 쪽과도 안 겹친다. 세로는 메뉴 링크 목록이 시작하는
-    # y=248px에 맞춰서, "↖"가 메뉴 목록 시작점을 짚고 위쪽(사이드바 전체)을 가리키게
-    # 했다. ⚠️ 사이드바를 사용자가 리사이즈했거나 뷰포트가 많이 다르면 어긋날 수 있음
-    # (반응형 접힘은 이번 범위에서 고려 안 함, 데스크톱 기준 근사치).
     st.markdown(
         "<style>"
         "@keyframes sidebar-discovery-pulse {"
-        "  0%, 100% { opacity: 0.72; transform: translate(0, 0) scale(1); }"
-        "  50% { opacity: 1; transform: translate(-6px, -4px) scale(1.08); }"
+        "  0%, 100% { opacity: 0.55; transform: scale(1); }"
+        "  50% { opacity: 1; transform: scale(1.3); }"
         "}"
-        "@keyframes sidebar-discovery-fadeout {"
-        "  from { opacity: 1; } to { opacity: 0; visibility: hidden; }"
+        "[data-testid='stSidebarCollapseButton'] {"
+        "  animation: sidebar-discovery-pulse 1.15s ease-in-out 4 !important;"
+        "  transform-origin: center;"
         "}"
-        ".sidebar-discovery-arrow {"
-        "  position: fixed; top: 250px; left: 316px; z-index: 999;"
-        "  font-size: 2rem; font-weight: 700; line-height: 1;"
-        "  color: #2f6fed; pointer-events: none;"
-        "  animation: sidebar-discovery-pulse 1.15s ease-in-out 4,"
-        "             sidebar-discovery-fadeout 0.4s ease-in 4.6s 1 forwards;"
+        "[data-testid='stSidebarCollapseButton'] [data-testid='stIconMaterial'] {"
+        "  color: #2f6fed !important;"
         "}"
         "@media (prefers-reduced-motion: reduce) {"
-        "  .sidebar-discovery-arrow { animation: none; opacity: 0.85; }"
+        "  [data-testid='stSidebarCollapseButton'] { animation: none; }"
         "}"
-        "</style>"
-        "<div class='sidebar-discovery-arrow'>↖</div>",
+        "</style>",
         unsafe_allow_html=True,
     )
 
