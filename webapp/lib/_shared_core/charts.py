@@ -1,9 +1,11 @@
 """최근 주가 캔들차트. 판단을 대신하지 않도록 매수/매도 신호 표시 없이
 가격·이동평균·거래량만 병치해서 보여준다 (원칙 B)."""
 
-import math
+from pathlib import Path
 
 import plotly.graph_objects as go
+import streamlit as st
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
 PERIOD_OPTIONS = {"1개월": 21, "3개월": 63, "6개월": 126, "1년": 252, "전체": None}
@@ -29,17 +31,14 @@ CHART_TEXT_COLOR = "#1f2937"
 # 타 증권사 앱처럼 클릭+드래그로 차트를 이동(pan)할 수 있게 — 기본값(zoom 박스선택) 대신.
 # scrollZoom은 마우스 휠로 확대/축소, displaylogo는 plotly 로고 제거.
 # ⚠️ 이건 가격 차트 전용이다(스크롤로 확대해서 보는 용도가 실제로 있음). 조작이 필요 없는
-# 차트(관계도, 재무제표 막대그래프)는 아래 STATIC_PLOTLY_CONFIG를 쓴다.
+# 차트(재무제표 막대그래프 등)는 아래 STATIC_PLOTLY_CONFIG를 쓴다.
 PLOTLY_CONFIG = {"scrollZoom": True, "displaylogo": False}
 
-# 조작이 필요 없는 차트 전용(관계도·재무제표 추이 등) — 조작을 전부 끄고 hover만 남긴다.
-# 원래 관계도 전용으로 만들었다(RELATIONSHIP_PLOTLY_CONFIG라는 이름이었음, 2026-07-28에
-# 일반화): 관계도는 그래프 아래에 근거 표가 길게 붙어서 사용자가 반드시 스크롤을 내려야
-# 하는데, 커서가 그래프 위에 있는 동안 휠을 굴리면 페이지가 안 내려가고 그래프가
-# 확대/축소돼 버렸다(가격 차트와 같은 config를 공유하고 있었던 탓). 좌표·확대에 의미가
-# 없는 차트라면 어디든 같은 문제가 재현되므로(예: 재무제표 막대그래프), 이름을 일반화해
-# 재사용한다.
-# staticPlot=True로 하면 hover까지 죽어서 쓸 수 없다 — 개별 옵션으로 끈다.
+# 조작이 필요 없는 차트 전용(재무제표 막대그래프 등) — 조작을 전부 끄고 hover만 남긴다.
+# 원래 관계도 전용으로 만들었다가(RELATIONSHIP_PLOTLY_CONFIG라는 이름이었음) 관계도가
+# vis-network 컴포넌트로 바뀌면서(2026-07-29) 더는 안 쓰지만, 재무제표 등 같은 문제
+# (커서가 차트 위에 있을 때 휠을 굴리면 페이지 스크롤 대신 차트가 확대/축소되던 문제)가
+# 있는 다른 차트에서 계속 쓰므로 이름은 그대로 둔다.
 STATIC_PLOTLY_CONFIG = {
     "scrollZoom": False,        # 휠은 페이지 스크롤로 넘긴다(이 문제의 직접 원인)
     "displayModeBar": False,    # 확대·저장 등 툴바 자체를 숨김
@@ -47,11 +46,6 @@ STATIC_PLOTLY_CONFIG = {
     "doubleClick": False,       # 더블클릭 자동 확대 방지
     "showAxisDragHandles": False,
 }
-
-# hover 말풍선 한 줄의 최대 표시 폭(한글은 2, 그 외는 1로 계산). plotly는 hover 텍스트를
-# 자동 줄바꿈하지 않아서, 긴 줄이 있으면 말풍선이 그림 영역보다 넓어지고 화면 밖으로
-# 잘려 나간다 — 공시 발췌문(영문 장문)에서 실제로 발생했다.
-_HOVER_WIDTH = 92
 
 
 def render_price_chart_figure(df, period_days=None):
@@ -138,9 +132,9 @@ _RELATIONSHIP_EDGE_COLORS = {
     "전략적 제휴": "#27ae60",  # 지분 투자·보유(#e67e22)와 너무 비슷한 주황이라 초록으로 변경
     "공시 내 언급": "#6b7280",  # 근거 등급 D — 나머지 유형과 구분되는 중립 회색
 }
-# 노드 안쪽을 같은 색 계열의 아주 옅은 톤으로 채워 선-노드가 한 덩어리로 읽히게 한다.
-# 채도를 낮게 잡는 이유: 진하게 칠하면 색이 "유불리"를 암시하는 것처럼 보이는데, 여기서
-# 색은 관계 유형 구분일 뿐이다(원칙 B — 방향 색상 미사용).
+# 로고 없는 노드의 안쪽을 같은 색 계열의 아주 옅은 톤으로 채워 선-노드가 한 덩어리로
+# 읽히게 한다. 채도를 낮게 잡는 이유: 진하게 칠하면 색이 "유불리"를 암시하는 것처럼
+# 보이는데, 여기서 색은 관계 유형 구분일 뿐이다(원칙 B — 방향 색상 미사용).
 _RELATIONSHIP_NODE_FILLS = {
     "M&A": "#fdecea",
     "지분 투자·보유": "#fdf0e3",
@@ -153,156 +147,8 @@ _RELATIONSHIP_NODE_FILLS = {
 _RELATIONSHIP_HUB_COLOR = "#2f6fed"
 _TERMINATED_STATUS = "철회·무산"
 _EVIDENCE_GRADE_RANK = {"A": 3, "B": 2, "C": 1, "D": 0}
-# hover에 넣을 발췌문 길이. 220자였는데 줄바꿈을 넣으면 그것만 3~4줄이 되어 말풍선이
-# 그래프를 덮었다 — 전체 발췌문은 아래 근거 표에서 넉넉히 보므로 여기선 짧게 맛만 보인다.
+# hover에 넣을 발췌문 길이. 전체 발췌문은 아래 근거 표에서 넉넉히 보므로 여기선 짧게 맛만 보인다.
 _MAX_PREVIEW_CHARS = 150
-
-# 노드가 이 개수를 넘으면 반지름을 번갈아 다르게 줘서 라벨이 서로 겹치는 걸 막는다
-# (10개를 같은 반지름 원에 두면 좌우 3~4시 방향에서 회사명이 붙어버린다).
-_STAGGER_FROM = 6
-_RADIUS_NEAR = 1.0
-_RADIUS_FAR = 1.24
-
-# 상대기업을 상위 몇 개로 자르지 않고 전부 그리기로 하면서(예전엔 근거 많은 순 10개만
-# 그리고 나머지는 표에서만 봐야 했음), 한 링에 몰아넣으면 회사 수가 많은 종목(수십 개)은
-# 라벨이 전부 겹쳐버린다. 그래서 한 링에 최대 _RING_CAPACITY개까지만 놓고, 그 이상은
-# 반지름을 한 단계 더 키운 다음 링에 이어서 배치한다 — 링마다 독립적으로 12시부터
-# 시계방향 균등 배치 + (6개 넘으면) 반지름 스태거링을 그대로 적용한다.
-_RING_CAPACITY = 10
-# 링 사이 간격. 한 링 안의 스태거링 폭(_RADIUS_FAR - _RADIUS_NEAR = 0.24)과 노드 지름
-# (_NODE_RADIUS * 2 = 0.27)을 더한 값보다 넉넉히 커야 다음 링의 노드가 겹치지 않는다.
-_RING_RADIUS_STEP = 0.62
-
-# 노드 원의 크기 — 픽셀(marker size)이 아니라 **데이터 좌표** 단위다.
-# 로고를 넣으려면 이래야 한다: plotly의 layout image는 데이터 좌표로 배치되는데 marker는
-# 픽셀 단위라, 원은 픽셀이고 로고는 데이터 단위면 창 크기가 바뀔 때 로고가 원 밖으로
-# 삐져나온다. 원 자체를 shape(데이터 좌표)로 그려서 둘이 항상 같이 움직이게 했다.
-_NODE_RADIUS = 0.135
-_HUB_RADIUS = 0.19
-# 로고 크기 배율 — 로고가 이미 원형으로 가공됐는지에 따라 둘 중 하나를 쓴다.
-#
-# _LOGO_FIT_CIRCULAR: 원형 PNG(lib/logos.py가 가운데를 원으로 잘라 알파 마스크를 씌운 것)는
-#   모서리가 없으니 원을 꽉 채운다. 다만 지름을 원과 똑같이(2.0) 주면 이미지가 테두리 선을
-#   덮어버려 유형별 색 링이 사라진다 — plotly는 image를 shape 위에 그리기 때문이다.
-#   그래서 살짝 안쪽에 앉혀(0.92) 링과 흰 여백이 남게 한다.
-# _LOGO_FIT_SQUARE: 가공에 실패한(예: SVG) 네모난 이미지는 예전처럼 원에 내접시킨다.
-#   내접 정사각형의 한 변은 반지름의 √2(≈1.41)이므로 그보다 크면 모서리가 삐져나온다.
-_LOGO_FIT_CIRCULAR = 1.84
-_LOGO_FIT_SQUARE = 1.41
-
-
-def _display_width(text):
-    """한글·한자·일본어는 라틴 문자의 약 두 배 폭을 차지하므로 2로 센다 — hover에 한글
-    설명과 영문 공시 발췌문이 섞여 있어서, 글자 수로만 재면 한글 줄이 훨씬 길어진다."""
-    return sum(2 if ord(ch) > 0x2E7F else 1 for ch in text)
-
-
-def _wrap_hover(text, width=_HOVER_WIDTH):
-    """hover 텍스트를 단어 경계에서 직접 줄바꿈한다(plotly가 안 해준다).
-
-    이미 들어있는 <br>은 그대로 살리고, 그보다 긴 줄만 쪼갠다. 공백 없이 긴 토큰
-    (URL 등)은 단어 경계가 없으니 폭에 맞춰 강제로 끊는다 — 안 그러면 그 줄 하나 때문에
-    말풍선 전체가 화면 밖으로 잘린다."""
-    lines = []
-    for raw_line in text.split("<br>"):
-        if _display_width(raw_line) <= width:
-            lines.append(raw_line)
-            continue
-        current = ""
-        for word in raw_line.split(" "):
-            # 단어 자체가 한 줄보다 길면 폭 단위로 잘라 넣는다
-            while _display_width(word) > width:
-                head = ""
-                for ch in word:
-                    if _display_width(head + ch) > width:
-                        break
-                    head += ch
-                if current:
-                    lines.append(current)
-                    current = ""
-                lines.append(head)
-                word = word[len(head):]
-            if not word:
-                continue
-            candidate = f"{current} {word}" if current else word
-            if current and _display_width(candidate) > width:
-                lines.append(current)
-                current = word
-            else:
-                current = candidate
-        if current:
-            lines.append(current)
-    return "<br>".join(lines)
-
-
-def _add_node_circle(fig, x, y, radius, fillcolor, linecolor, width=2):
-    """노드 원을 데이터 좌표 shape으로 그린다(로고와 같은 좌표계를 쓰기 위함).
-    layer="below"는 trace(선·라벨) 기준이며, 선은 이미 원 테두리에서 끊기므로 겹치지 않는다."""
-    fig.add_shape(
-        type="circle", xref="x", yref="y", layer="below",
-        x0=x - radius, x1=x + radius, y0=y - radius, y1=y + radius,
-        fillcolor=fillcolor, line=dict(color=linecolor, width=width),
-    )
-
-
-def _add_logo_image(fig, x, y, radius, logo):
-    """원 안에 로고를 앉힌다. logo는 lib/logos.py::get_circular_logo()가 주는
-    {"src":..., "circular": bool} 형태이거나, 그냥 URL 문자열이어도 된다(문자열이면
-    네모난 이미지로 보고 내접시킨다).
-
-    circular=True면 이미지 자체가 원형이라 원을 거의 꽉 채우고, False면 모서리가
-    삐져나오지 않게 내접시킨다. sizing="contain"으로 비율을 보존하므로 어느 쪽이든
-    이미지가 찌그러지지는 않는다. 이미지를 못 받아오면 plotly가 조용히 아무것도 안 그려서
-    자동으로 '빈 원'(로고 기능 추가 전 모습)으로 폴백된다."""
-    if isinstance(logo, str):
-        src, circular = logo, False
-    else:
-        src, circular = logo.get("src"), bool(logo.get("circular"))
-    if not src:
-        return
-    side = radius * (_LOGO_FIT_CIRCULAR if circular else _LOGO_FIT_SQUARE)
-    fig.add_layout_image(
-        source=src, xref="x", yref="y", x=x, y=y,
-        sizex=side, sizey=side, xanchor="center", yanchor="middle",
-        sizing="contain", layer="above", opacity=1,
-    )
-
-
-def _edge_endpoints(x, y):
-    """허브에서 노드로 가는 선을, 양쪽 원의 테두리에서 시작·종료하도록 잘라 반환한다.
-    중심에서 중심으로 그으면 선이 원 내부를 가로질러 로고 위에 겹친다."""
-    dist = math.hypot(x, y) or 1.0
-    ux, uy = x / dist, y / dist
-    start = (ux * _HUB_RADIUS, uy * _HUB_RADIUS)
-    end = (ux * (dist - _NODE_RADIUS), uy * (dist - _NODE_RADIUS))
-    return start, end
-
-
-# 화살표 머리를 그릴 아주 짧은 구간의 길이 — 선 전체를 화살표로 그리는 게 아니라, 이미
-# go.Scatter로 그려진 선 위에 짧은 화살촉만 얹는 방식(plotly Scatter는 자체 화살표가
-# 없고, annotation의 화살표 기능을 빌려 쓴다).
-_ARROW_HEAD_LEN = 0.09
-
-
-def _direction_arrow(sx, sy, ex, ey, direction, color):
-    """direction이 "outbound"(허브→상대)/"inbound"(상대→허브)일 때 화살촉 annotation
-    kwargs를 반환한다. "bidirectional"/"unknown"이면 None — 방향이 공식 근거로 확인된
-    관계에만 화살표를 쓴다는 원칙(지시서 5절: 방향 UI 규칙)을 그대로 따른다."""
-    if direction == "outbound":
-        tip, tail = (ex, ey), (sx, sy)
-    elif direction == "inbound":
-        tip, tail = (sx, sy), (ex, ey)
-    else:
-        return None
-    dx, dy = tip[0] - tail[0], tip[1] - tail[1]
-    dist = math.hypot(dx, dy) or 1.0
-    ux, uy = dx / dist, dy / dist
-    shaft_x, shaft_y = tip[0] - ux * _ARROW_HEAD_LEN, tip[1] - uy * _ARROW_HEAD_LEN
-    return dict(
-        x=tip[0], y=tip[1], ax=shaft_x, ay=shaft_y, xref="x", yref="y", axref="x", ayref="y",
-        showarrow=True, arrowhead=2, arrowsize=1.1, arrowwidth=1.6, arrowcolor=color,
-        text="", standoff=0,
-    )
 
 
 def _preview_text(headline_tuple):
@@ -318,22 +164,19 @@ def _preview_text(headline_tuple):
 
 
 # ---------------------------------------------------------------------------
-# hover 한 줄 요약 합성 (2026-07-28 신규, 관계도 2단계) — 지금까지 hover는 원문 발췌
-# (영문, _preview_text)를 그대로 보여줘서 "무슨 관계인지"를 사용자가 직접 읽고 판단해야
-# 했다(사용자 피드백: "노드에 커서만 올려도 관계를 바로 알 수 있어야 하고, 사용자는
-# 최소한의 노력만 해야 한다"). 1단계에서 채운 direction(outbound/inbound)과 유형을
-# 조합해 한글 한 줄로 미리 합성해두고, 원문 발췌는 그 아래 보조 정보로 내린다.
-# 방향이 "unknown"이면 화살표를 안 그리는 것과 같은 원칙으로, 화살표 방향(A가 B에게)을
-# 문장으로 단정하지 않고 유형만 담백하게 말한다 — 근거 없는 확신을 만들지 않는다.
+# hover 한 줄 요약 합성 (2026-07-28, 관계도 2단계) — hover는 원문 발췌(영문)를 그대로
+# 보여주는 대신, 1단계에서 채운 direction(outbound/inbound)과 유형을 조합해 한글 한 줄로
+# 미리 합성해두고 원문 발췌는 보조 정보로 내린다. 방향이 "unknown"이면 화살표를 안 그리는
+# 것과 같은 원칙으로, 화살표 방향을 문장으로 단정하지 않고 유형만 담백하게 말한다 —
+# 근거 없는 확신을 만들지 않는다.
 _SUPPLY_LIKE_TYPES = {"공급·고객 계약", "전략적 제휴", "라이선싱", "합작투자"}
 
-# 방향을 못 정했을 때(unknown) 쓸 유형별 대체 문구 — "합작투자"/"전략적 제휴"라는 유형
-# 이름 그대로 쓰기보다 사용자 피드백대로 "공동개발"/"파트너십 체결"처럼 실제로 무슨 일이
-# 있었는지를 담은 자연스러운 동사구를 쓴다. JV·전략적 제휴·라이선싱은 원래 방향(누가
-# 누구에게)이라는 개념 자체가 상호적이라 없는 게 정상이므로, "미확인"이 아니라 이 문구로
-# 대체한다. 여기 없는 유형(공급·고객 계약/M&A/지분 투자·보유/공시 내 언급)은 원래 방향이
-# 있어야 하는데 못 찾은 경우라 "미확인"을 그대로 쓴다 — 못 찾았다는 사실 자체를 감추지
-# 않는다(원칙 7).
+# 방향을 못 정했을 때(unknown) 쓸 유형별 대체 문구 — 유형 이름 그대로 쓰기보다
+# "공동개발"/"파트너십 체결"처럼 실제로 무슨 일이 있었는지를 담은 자연스러운 동사구를
+# 쓴다. JV·전략적 제휴·라이선싱은 원래 방향(누가 누구에게)이라는 개념 자체가 상호적이라
+# 없는 게 정상이므로, "미확인"이 아니라 이 문구로 대체한다. 여기 없는 유형은 원래
+# 방향이 있어야 하는데 못 찾은 경우라 "미확인"을 그대로 쓴다 — 못 찾았다는 사실 자체를
+# 감추지 않는다(원칙 7).
 _NON_DIRECTIONAL_LABELS = {
     "합작투자": "공동개발",
     "전략적 제휴": "파트너십 체결",
@@ -385,9 +228,9 @@ def _synthesize_relationship_line(hub_ticker, cp_ticker_or_name, primary_type, d
 
 def group_relationship_edges(edges):
     """엣지 목록을 상대 회사 단위로 묶어 (티커, 정보) 리스트를 근거 수·최신순으로 정렬해
-    반환한다. 그래프(상위 N개만)와 그래프 아래 근거 표(전체)가 **같은 그룹핑·같은 정렬**을
-    쓰도록 여기 한 곳에만 둔다 — 예전엔 그래프 함수 안에 묻혀 있어서, 표를 따로 만들면
-    "그래프에 보이는 순서"와 "표의 순서"가 조용히 갈라질 수 있었다.
+    반환한다. 그래프와 그래프 아래 근거 표(전체)가 **같은 그룹핑·같은 정렬**을 쓰도록
+    여기 한 곳에만 둔다 — 예전엔 그래프 함수 안에 묻혀 있어서, 표를 따로 만들면 "그래프에
+    보이는 순서"와 "표의 순서"가 조용히 갈라질 수 있었다.
 
     news_count/filing_count를 나눠 세는 이유: 근거 표에서 "이 회사는 뉴스로 잡힌 건가,
     공시로 잡힌 건가"가 신뢰도 판단의 핵심인데, 합계만으로는 구분이 안 되기 때문이다.
@@ -424,10 +267,7 @@ def group_relationship_edges(edges):
         ))
         # source_kind로 판정한다(relationship_type 문자열이 아니라) — "공시 내 언급"이
         # promote_mentions_with_context()로 "공급·고객 계약" 등으로 승격돼도 source_kind는
-        # 그대로 "SEC 공시"라 승격된 엣지도 여전히 filing_count로 잡힌다. relationship_type
-        # 문자열로만 판정했을 때는 승격된 엣지가 news_count로 잘못 잡혀, "뉴스 근거가 이미
-        # 있다"고 오판해 상대회사 뉴스 보강(find_counterparty_context_news)을 건너뛰는
-        # 버그가 있었다.
+        # 그대로 "SEC 공시"라 승격된 엣지도 여전히 filing_count로 잡힌다.
         if e.get("source_kind") == "SEC 공시":
             g["filing_count"] += 1
         else:
@@ -450,95 +290,64 @@ def group_relationship_edges(edges):
     )
 
 
-def _ring_count(total):
-    """total개 노드를 _RING_CAPACITY개씩 나눠 담을 때 필요한 링 수."""
-    return max(1, math.ceil(total / _RING_CAPACITY))
+# ---------------------------------------------------------------------------
+# 관계도 렌더링 — vis-network.js (2026-07-29, EveryTie 참고로 Plotly 고정 링 배치에서
+# 교체). 물리 기반 force-directed 레이아웃이라 드래그·확대·자연스러운 군집이 전부
+# 공짜로 딸려온다 — 예전엔 이걸 전부 손으로 계산했다(_node_positions 각도/반지름 수학,
+# cluster_by_sector 섹터 재배열). 컴포넌트 코드는
+# lib/page8_only_relationship/relationship_graph_component/index.html.
+# ---------------------------------------------------------------------------
+_COMPONENT_DIR = (
+    Path(__file__).resolve().parent.parent / "page8_only_relationship" / "relationship_graph_component"
+)
+_relationship_network_component = components.declare_component(
+    "relationship_graph", path=str(_COMPONENT_DIR),
+)
 
 
-def _position_for_index(i, count):
-    """전체 count개 중 i번째 노드의 (각도, 반지름) — _node_positions와 섹터 라벨 배치
-    (_sector_label_anchor)가 같은 좌표 계산을 공유하도록 분리해뒀다."""
-    ring = i // _RING_CAPACITY
-    idx_in_ring = i % _RING_CAPACITY
-    ring_size = min(_RING_CAPACITY, count - ring * _RING_CAPACITY)
-    angle = math.pi / 2 - 2 * math.pi * idx_in_ring / ring_size
-    radius = _RADIUS_NEAR + ring * _RING_RADIUS_STEP
-    if ring_size >= _STAGGER_FROM and idx_in_ring % 2 == 1:
-        radius += _RADIUS_FAR - _RADIUS_NEAR
-    return angle, radius
-
-
-def _node_positions(count):
-    """허브를 중심으로 12시 방향에서 시계방향으로 노드를 배치한 좌표 목록.
-
-    12시에서 시계방향인 이유는 단순히 읽는 순서와 맞아서다(기존엔 3시에서 반시계방향이라
-    "가장 근거가 많은 회사"가 오른쪽 옆구리에서 시작했다).
-
-    상대기업이 _RING_CAPACITY(10개)를 넘으면 한 링에 다 몰아넣지 않고 반지름이 더 큰
-    다음 링으로 이어서 배치한다(근거가 많은 순서 그대로 안쪽 링부터 채움) — 상위 몇 개만
-    그리던 예전 방식과 달리 전부 다 그리기로 하면서, 회사 수가 많아도 라벨이 뭉개지지
-    않게 하기 위함. 각 링 내부에서는 그 링에 든 노드 수만큼 균등 분배하고, 6개 넘게
-    들어간 링은 기존처럼 반지름을 번갈아 바꿔 라벨 겹침을 한 번 더 완화한다."""
-    positions = []
-    for i in range(count):
-        angle, radius = _position_for_index(i, count)
-        positions.append((radius * math.cos(angle), radius * math.sin(angle)))
-    return positions
-
-
-# 상대기업이 많을 때(사용자 요청: "너무 많아지면 섹터별로 묶을 수 있을까") 이 개수를
-# 넘어야만 섹터 클러스터링을 켠다 — 적을 때는 링 하나에 다 들어가서 묶어도 얻는 게 없다.
-SECTOR_CLUSTER_THRESHOLD = _RING_CAPACITY
-_UNKNOWN_SECTOR_LABEL = "섹터 정보 없음"
-
-
-def cluster_by_sector(ordered, sectors):
-    """group_relationship_edges() 결과(근거 수 내림차순)를 섹터가 같은 회사끼리 인접하게
-    재배열한다. 그룹 자체는 그룹 내 근거 수 합계가 큰 순으로 배치하고, 그룹 안에서는
-    기존 정렬(근거 수 내림차순)을 그대로 유지한다. 섹터를 못 찾은 회사는 "섹터 정보
-    없음"으로 묶어 맨 뒤에 둔다. (재배열된 리스트, [(섹터명, 시작idx, 끝idx), ...]) 반환 —
-    뒤의 idx 구간은 render_relationship_graph_figure가 섹터 라벨을 그릴 때 쓴다."""
-    buckets = {}
-    for cp_ticker, g in ordered:
-        sec = sectors.get(cp_ticker) or _UNKNOWN_SECTOR_LABEL
-        buckets.setdefault(sec, []).append((cp_ticker, g))
-
-    ranked = sorted(
-        buckets.items(),
-        key=lambda kv: (
-            kv[0] != _UNKNOWN_SECTOR_LABEL,
-            sum(len(g["headlines"]) for _, g in kv[1]),
-        ),
-        reverse=True,
+def _node_title_html(hub_ticker, ticker, g):
+    """노드 hover에 쓸 HTML. 예전 Plotly 버전은 hover 텍스트를 손으로 줄바꿈해야 했다
+    (plotly가 자동 줄바꿈을 안 해줘서, _wrap_hover/_display_width 참고— 이제 삭제됨) —
+    vis-network 네이티브 tooltip은 CSS(white-space:normal, max-width)로 알아서 줄바꿈해서
+    그 손수 wrap 로직 자체가 필요 없어졌다."""
+    headlines_preview = "<br>".join(
+        f"· [{h[3]}] {_preview_text(h)}"
+        for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:2]
+    )
+    source_str = " · ".join(filter(None, [
+        f"뉴스 {g['news_count']}건" if g["news_count"] else "",
+        f"공시 {g['filing_count']}건" if g["filing_count"] else "",
+    ]))
+    synth_line = _synthesize_relationship_line(
+        hub_ticker, ticker, g["types"][0], g.get("direction", "unknown"), g.get("ownership_pct"),
+    )
+    return (
+        f"<b>{g['name'] or ticker}</b> ({ticker})<br><b>{synth_line}</b>"
+        f"<br>최신 상태: {g['latest_status']} · 근거: {source_str}"
+        f"<br><br>근거 원문: {headlines_preview}"
     )
 
-    clustered, boundaries = [], []
-    idx = 0
-    for sector_name, members in ranked:
-        clustered.extend(members)
-        boundaries.append((sector_name, idx, idx + len(members)))
-        idx += len(members)
-    return clustered, boundaries
+
+def _logo_src(logo):
+    if not logo:
+        return None
+    return logo.get("src") if isinstance(logo, dict) else logo
 
 
-def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, sectors=None):
-    """허브(현재 티커) 중심 원형 관계도. 상대기업을 상위 몇 개로 자르지 않고 전부 그린다 —
-    근거가 많은 순으로 안쪽 링부터 채우고, 한 링(_RING_CAPACITY개)이 차면 반지름을 키운
-    다음 링에 이어서 배치한다(_node_positions 참고). networkx 등 배치 라이브러리 없이도
-    단순 원형/링 배치로 충분하다. 같은 상대 회사에 대한 여러 엣지는 노드 1개로 합치고,
+def render_relationship_network(hub_ticker, hub_name, edges, logos=None, key=None):
+    """허브(현재 티커) 중심 관계도를 vis-network 컴포넌트로 그린다. 상대기업을 상위 몇
+    개로 자르지 않고 전부 그린다. 같은 상대 회사에 대한 여러 엣지는 노드 1개로 합치고,
     유형은 색, 최신 진행상태가 "철회·무산"이면 점선으로 표시한다 — 관계가 끝났다는 신호를
     색과 별개로 선 스타일이라는 독립된 채널로 전달(오독 방지).
 
-    logos: {티커: `lib/logos.py::get_circular_logo()` 결과} — 있으면 노드 원 안에 로고를
-    넣는다. 이 함수는 네트워크를 타지 않는다(순수 렌더링 유지). 로고 수집·가공은 호출부
-    (pages/8_관계도.py)가 담당하고, 없는 티커는 그냥 빠지면 된다 — 로고 없는 노드는 로고
-    기능 추가 전과 똑같이 빈 원으로 그려진다.
+    logos: {티커: `lib/page8_only_relationship/logos.py::get_circular_logo()` 결과 또는
+    URL 문자열} — 있으면 노드를 그 로고 이미지로(vis-network의 circularImage 셰이프가
+    사각형 이미지도 원 안에 알아서 잘라 넣어준다 — 예전 Plotly 버전처럼 서버에서
+    "원형으로 잘랐는지" 구분해서 크기를 다르게 줄 필요가 없어졌다). 없으면 유형별 옅은
+    색 배경의 빈 원.
 
-    sectors: {티커: 섹터명 또는 None} — 상대기업이 SECTOR_CLUSTER_THRESHOLD개를 넘으면
-    (사용자 요청: "너무 많아지면 섹터별로 묶어서") 같은 섹터끼리 인접하게 재배열하고,
-    각 섹터 군집의 첫(근거 최다) 노드 옆에 섹터명을 라벨로 붙인다. None이거나 상대기업이
-    적으면 기존처럼 근거 수 순서 그대로 배치한다(하위 호환 — 이 인자를 안 넘기던 기존
-    호출부·테스트는 그대로 동작).
+    반환값: 클릭된 상대기업 티커, 또는 아무것도 안 눌렀으면 None(허브 클릭도 None —
+    자기 자신으로 재검색되는 걸 막으려고 컴포넌트 쪽에서 걸러준다).
 
     ⚠️ 노드 크기는 근거 개수와 무관하게 전부 같다. 크기로 굵기를 주면 "근거가 많다 =
     관계가 더 확실하다"는 뜻으로 읽히는데, 그건 이 제품이 하지 않기로 한 집계다(원칙 B).
@@ -546,164 +355,91 @@ def render_relationship_graph_figure(hub_ticker, hub_name, edges, logos=None, se
     logos = logos or {}
     ordered = group_relationship_edges(edges)
 
-    sector_boundaries = []
-    if sectors and len(ordered) > SECTOR_CLUSTER_THRESHOLD:
-        ordered, sector_boundaries = cluster_by_sector(ordered, sectors)
-        if len(sector_boundaries) <= 1:
-            sector_boundaries = []  # 섹터가 하나뿐이면 묶어봐야 라벨만 늘 뿐이라 생략
+    hub_src = _logo_src(logos.get(hub_ticker))
+    hub_node = {
+        "id": hub_ticker, "label": hub_ticker, "size": 34,
+        "fixed": {"x": True, "y": True}, "x": 0, "y": 0,
+        "titleHtml": f"<b>{hub_name}</b> ({hub_ticker})",
+    }
+    if hub_src:
+        hub_node.update(
+            shape="circularImage", image=hub_src, borderWidth=4,
+            color={"border": _RELATIONSHIP_HUB_COLOR, "background": "#ffffff"},
+            font={"size": 14, "color": _RELATIONSHIP_HUB_COLOR, "bold": True},
+        )
+    else:
+        hub_node.update(
+            shape="dot",
+            color={"border": _RELATIONSHIP_HUB_COLOR, "background": _RELATIONSHIP_HUB_COLOR},
+            font={"size": 14, "color": "#ffffff", "bold": True},
+        )
+    nodes = [hub_node]
 
-    fig = go.Figure()
-    coords = _node_positions(len(ordered))
-
-    types_present = set()
-    any_terminated = False
-    for (ticker, g), (x, y) in zip(ordered, coords):
-        primary_type = g["types"][0]
-        types_present.add(primary_type)
-        is_terminated = g["latest_status"] == _TERMINATED_STATUS
-        any_terminated = any_terminated or is_terminated
-        # 선을 노드 중심까지 긋지 않고 원 테두리에서 끊는다 — 중심까지 그으면 선이 원 안을
-        # 가로질러 로고 위에 겹쳐 보인다(로고를 넣기 전에는 원이 비어 있어 티가 안 나던 부분).
-        (sx, sy), (ex, ey) = _edge_endpoints(x, y)
-        edge_color = _RELATIONSHIP_EDGE_COLORS.get(primary_type, "#9aa0a6")
-        fig.add_trace(go.Scatter(
-            x=[sx, ex], y=[sy, ey], mode="lines",
-            line=dict(width=1.6, color=edge_color, dash="dot" if is_terminated else "solid"),
-            opacity=0.75, hoverinfo="skip", showlegend=False,
-        ))
-        # 화살표는 방향이 공식 근거로 확인된 관계(outbound/inbound)에만 그린다 —
-        # bidirectional/unknown은 지금처럼 선만(방향을 추측해 억지로 표시하지 않음).
-        arrow_kwargs = _direction_arrow(sx, sy, ex, ey, g.get("direction", "unknown"), edge_color)
-        if arrow_kwargs:
-            fig.add_annotation(**arrow_kwargs)
-
-    # 범례는 실제로 등장한 유형만, 고정된 색 순서로(그래프마다 순서가 흔들리지 않게)
-    for rel_type, color in _RELATIONSHIP_EDGE_COLORS.items():
-        if rel_type in types_present:
-            fig.add_trace(go.Scatter(
-                x=[None], y=[None], mode="lines", line=dict(width=2, color=color), name=rel_type,
-            ))
-    if any_terminated:
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode="lines", line=dict(width=2, color="#9aa0a6", dash="dot"),
-            name="점선 = 철회·무산",
-        ))
-
-    node_x, node_y, node_text, hover_text, text_positions = [], [], [], [], []
-    for (ticker, g), (x, y) in zip(ordered, coords):
+    edges_out = []
+    for ticker, g in ordered:
         primary_type = g["types"][0]
         border = _RELATIONSHIP_EDGE_COLORS.get(primary_type, "#9aa0a6")
-        logo_url = logos.get(ticker)
-        # 로고가 있으면 원 안쪽은 흰색으로 — 옅은 색조 위에 로고를 얹으면 로고의 흰 배경과
-        # 원 배경이 어긋나 얼룩덜룩해 보인다. 로고가 없으면 기존처럼 유형별 옅은 색조를 쓴다.
-        fill = "white" if logo_url else _RELATIONSHIP_NODE_FILLS.get(primary_type, "#f1f2f4")
-        _add_node_circle(fig, x, y, _NODE_RADIUS, fill, border, width=2)
-        if logo_url:
-            _add_logo_image(fig, x, y, _NODE_RADIUS, logo_url)
+        src = _logo_src(logos.get(ticker))
+        node = {
+            "id": ticker, "label": ticker, "size": 24,
+            "titleHtml": _node_title_html(hub_ticker, ticker, g),
+        }
+        if src:
+            node.update(
+                shape="circularImage", image=src,
+                color={"border": border, "background": "#ffffff"},
+            )
+        else:
+            fill = _RELATIONSHIP_NODE_FILLS.get(primary_type, "#f1f2f4")
+            node.update(shape="dot", color={"border": border, "background": fill})
+        nodes.append(node)
 
-        node_x.append(x)
-        node_y.append(y)
-        node_text.append(ticker)
-        # 라벨은 로고 유무와 무관하게 항상 원 바깥(허브 반대편)에 둔다 — 로고만으로는 어느
-        # 회사인지 못 알아보는 경우가 많고, 로고 있는 노드와 없는 노드의 라벨 위치가 달라지면
-        # 눈이 훑을 때 줄이 안 맞아 더 어수선해진다.
-        text_positions.append("top center" if y >= 0 else "bottom center")
+        direction = g.get("direction", "unknown")
+        arrows = {}
+        if direction == "outbound":
+            arrows = {"to": {"enabled": True, "scaleFactor": 0.6}}
+        elif direction == "inbound":
+            arrows = {"from": {"enabled": True, "scaleFactor": 0.6}}
+        elif direction == "bidirectional":
+            arrows = {
+                "to": {"enabled": True, "scaleFactor": 0.6},
+                "from": {"enabled": True, "scaleFactor": 0.6},
+            }
+        edges_out.append({
+            "from": hub_ticker, "to": ticker, "color": border,
+            "dashes": g["latest_status"] == _TERMINATED_STATUS, "arrows": arrows,
+        })
 
-        # 아래 근거 표가 전체를 다 보여주므로 hover는 최신 2건까지만 — 말풍선이 화면을
-        # 덮을 만큼 길어지면 정작 그래프가 안 보인다.
-        headlines_preview = "<br>".join(
-            f"· [{h[3]}] {_preview_text(h)}"
-            for h in sorted(g["headlines"], key=lambda h: h[0], reverse=True)[:2]
-        )
-        source_str = " · ".join(filter(None, [
-            f"뉴스 {g['news_count']}건" if g["news_count"] else "",
-            f"공시 {g['filing_count']}건" if g["filing_count"] else "",
-        ]))
-        # 합성 한 줄 요약을 맨 위에 굵게 — 사용자가 이 한 줄만 읽어도 관계 종류·방향을
-        # 알 수 있게 하는 게 목적(2단계). 원문 발췌(headlines_preview)는 "그 아래 검증용
-        # 근거"로 내려서, 굳이 영문 원문을 읽지 않아도 hover 첫 줄에서 판단이 끝나게 한다.
-        synth_line = _synthesize_relationship_line(
-            hub_ticker, ticker, primary_type, g.get("direction", "unknown"), g.get("ownership_pct"),
-        )
-        hover_text.append(_wrap_hover(
-            f"<b>{g['name'] or ticker}</b> ({ticker})<br><b>{synth_line}</b>"
-            f"<br>최신 상태: {g['latest_status']} · 근거: {source_str}"
-            f"<br><br>근거 원문: {headlines_preview}"
-            f"<br><br><i>원문 링크와 전체 근거는 아래 표에 있습니다</i>"
-        ))
+    # 노드가 많을수록 물리 시뮬레이션이 펼쳐질 공간이 더 필요하다 — 12개까지는 기본
+    # 높이, 그 이상은 조금씩 키우되 너무 길어지지 않게 상한을 둔다.
+    height = 420 if len(ordered) <= 12 else min(760, 420 + (len(ordered) - 12) * 12)
 
-    # 원은 shape으로 그렸으므로, 이 trace는 (1) 라벨 (2) hover 판정 영역 역할만 한다.
-    # 마커를 완전 투명하게 두는 이유: 원 위에 또 원을 겹쳐 그리면 테두리가 두 겹으로 보인다.
-    # 투명해도 hover 판정은 살아있다.
-    fig.add_trace(go.Scatter(
-        x=node_x, y=node_y, mode="markers+text", text=node_text, textposition=text_positions,
-        marker=dict(size=38, color="rgba(0,0,0,0)"),
-        textfont=dict(size=12, color="#3c4043"),
-        hovertext=hover_text, hoverinfo="text", showlegend=False,
-        # 클릭 시 어느 상대기업인지 식별하는 용도 — pages/8_관계도.py가 st.plotly_chart의
-        # on_select 이벤트에서 이 값을 읽어 그 회사로 검색 이동한다(2026-07-29).
-        customdata=node_text,
-    ))
-
-    # 허브 — 로고가 있으면 흰 원 + 굵은 파란 테두리(중심임을 테두리로 표현), 없으면 예전처럼
-    # 파랑으로 꽉 채우고 흰 글씨로 티커를 넣는다.
-    hub_logo = logos.get(hub_ticker)
-    if hub_logo:
-        _add_node_circle(fig, 0, 0, _HUB_RADIUS, "white", _RELATIONSHIP_HUB_COLOR, width=4)
-        _add_logo_image(fig, 0, 0, _HUB_RADIUS, hub_logo)
-        fig.add_trace(go.Scatter(
-            x=[0], y=[0], mode="markers+text", text=[hub_ticker], textposition="bottom center",
-            marker=dict(size=52, color="rgba(0,0,0,0)"),
-            textfont=dict(size=13, color=_RELATIONSHIP_HUB_COLOR, family="Arial Black, sans-serif"),
-            hovertext=[hub_name], hoverinfo="text", showlegend=False,
-        ))
-    else:
-        fig.add_trace(go.Scatter(
-            x=[0], y=[0], mode="markers+text", text=[hub_ticker], textposition="middle center",
-            marker=dict(size=52, color=_RELATIONSHIP_HUB_COLOR, line=dict(width=3, color="white")),
-            textfont=dict(color="white", size=13, family="Arial Black, sans-serif"),
-            hovertext=[hub_name], hoverinfo="text", showlegend=False,
-        ))
-
-    # 라벨이 노드 바깥에 붙으므로 축 범위를 가장 바깥 링의 반지름보다 넉넉히 잡아야
-    # 잘리지 않는다. fixedrange=True로 축 확대/축소를 아예 막는다 — 관계도는 좌표에
-    # 의미가 없어서(원형 배치는 배치일 뿐) 확대해서 볼 것이 없고, 사용자가 스크롤로
-    # 아래 표를 보려다 실수로 그래프를 확대해버리는 일을 막는 게 훨씬 중요하다.
-    num_rings = _ring_count(len(ordered))
-    outer_radius = _RADIUS_NEAR + (num_rings - 1) * _RING_RADIUS_STEP + (_RADIUS_FAR - _RADIUS_NEAR)
-    span = outer_radius + _NODE_RADIUS + 0.42
-
-    # 섹터 군집마다 그 군집의 첫(근거 최다) 노드 바로 바깥에 섹터명을 라벨로 붙인다 —
-    # 클러스터링만으로는 "왜 이렇게 뭉쳐 있는지"가 안 보여서, 이름표를 옆에 놓아 바로 알게 한다.
-    for sector_name, start, _end in sector_boundaries:
-        angle, radius = _position_for_index(start, len(ordered))
-        label_radius = radius + _NODE_RADIUS + 0.28
-        fig.add_annotation(
-            x=label_radius * math.cos(angle), y=label_radius * math.sin(angle),
-            xref="x", yref="y", text=sector_name, showarrow=False,
-            font=dict(size=11, color=CHART_TEXT_COLOR),
-            bgcolor="rgba(255,255,255,0.85)", borderpad=2,
-        )
-
-    fig.update_xaxes(visible=False, range=[-span, span], fixedrange=True)
-    fig.update_yaxes(
-        visible=False, range=[-span, span], scaleanchor="x", scaleratio=1, fixedrange=True,
+    return _relationship_network_component(
+        nodes=nodes, edges=edges_out, hubId=hub_ticker, height=height, key=key, default=None,
     )
-    # 링이 늘어나 좌표 범위(span)가 넓어지는 만큼 픽셀 높이도 같이 키운다 — 안 그러면
-    # 노드·로고·글자가 화면에서 점점 작아져 상대기업이 많은 종목일수록 오히려 안 보이게 된다.
-    # 단일 링(span 기본값) 기준 520px을 그대로 두고 비율만큼 늘리되, 너무 길어지지 않게 상한.
-    _DEFAULT_SPAN = _RADIUS_FAR + _NODE_RADIUS + 0.42
-    height = min(1400, round(520 * (span / _DEFAULT_SPAN)))
-    fig.update_layout(
-        height=height,
-        margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.01, x=0.5, xanchor="center",
-            font=dict(size=11, color=CHART_TEXT_COLOR), bgcolor="rgba(0,0,0,0)",
-        ),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        dragmode=False,  # 드래그로 이동/영역선택하는 동작 제거 (hover는 그대로 살아있다)
-        hoverlabel=dict(align="left", bgcolor="white", font=dict(size=12, color=CHART_TEXT_COLOR)),
-        font=dict(color=CHART_TEXT_COLOR),
+
+
+def render_relationship_legend(edges):
+    """그래프 위에 붙이는 색상 범례. 예전엔 Plotly 더미 trace로 그렸지만(범례 자체가
+    Plotly 기능), vis-network 컴포넌트는 그런 게 없어서 실제로 등장한 유형만 골라
+    HTML로 직접 그린다 — 색 순서는 render_relationship_network가 쓰는 것과 동일하게
+    고정 순서(그래프마다 순서가 흔들리지 않게)."""
+    types_present = {e["relationship_type"] for e in edges}
+    any_terminated = any(e["status"] == _TERMINATED_STATUS for e in edges)
+
+    items = [
+        f"<span style='display:inline-flex; align-items:center; gap:0.35rem; margin-right:1.1rem;'>"
+        f"<span style='width:14px; height:3px; background:{color}; display:inline-block; "
+        f"border-radius:2px;'></span>{rel_type}</span>"
+        for rel_type, color in _RELATIONSHIP_EDGE_COLORS.items() if rel_type in types_present
+    ]
+    if any_terminated:
+        items.append(
+            "<span style='display:inline-flex; align-items:center; gap:0.35rem;'>"
+            "<span style='width:14px; height:0; border-top:3px dashed #9aa0a6; "
+            "display:inline-block;'></span>점선 = 철회·무산</span>"
+        )
+    st.markdown(
+        f"<div style='font-size:0.8rem; color:#3c4043; margin-bottom:0.6rem;'>{''.join(items)}</div>",
+        unsafe_allow_html=True,
     )
-    return fig

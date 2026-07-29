@@ -13,8 +13,8 @@ from lib._shared_core.page_helpers import (
 )
 from lib._shared_core.search import render_sidebar, fetch_and_store_ticker
 from lib._shared_core.charts import (
-    render_relationship_graph_figure, group_relationship_edges, direction_label,
-    STATIC_PLOTLY_CONFIG, SECTOR_CLUSTER_THRESHOLD,
+    render_relationship_network, render_relationship_legend, group_relationship_edges,
+    direction_label,
 )
 from lib._shared_core.known_companies import STATIC_KNOWN_COMPANIES
 from lib._shared_page2_page8_filings.sec_filings import (
@@ -22,7 +22,6 @@ from lib._shared_page2_page8_filings.sec_filings import (
     find_beneficial_owners,
 )
 from lib.page8_only_relationship.logos import get_circular_logos
-from lib.page8_only_relationship.sectors import get_sectors
 from lib._shared_core.translate import to_korean, prefetch_korean
 from lib._shared_core.qualitative import find_counterparty_context_news
 
@@ -225,9 +224,9 @@ render_info_cards([
 
 def _looks_like_ticker(s):
     """13D/13G 보고자는 실제 티커가 없으면 그룹 키가 회사명 전체로 대체된다
-    (lib/charts.py::group_relationship_edges) — 그런 "가짜 티커"를 로고·섹터 조회에
-    그대로 넘기면 yfinance/Finnhub에 의미 없는 호출만 늘어난다. 진짜 티커처럼 보이는
-    것만 걸러서 넘긴다."""
+    (lib/charts.py::group_relationship_edges) — 그런 "가짜 티커"를 로고 조회에 그대로
+    넘기면 yfinance/Finnhub에 의미 없는 호출만 늘어난다. 진짜 티커처럼 보이는 것만
+    걸러서 넘긴다."""
     return bool(re.match(r"^[A-Z]{1,5}(\.[A-Z]{1,2})?$", s or ""))
 
 
@@ -242,49 +241,24 @@ if st.session_state.get("relationship_logo_key") != logo_cache_key:
         logos = get_circular_logos([ticker] + ticker_like)
     st.session_state.update(relationship_logos=logos, relationship_logo_key=logo_cache_key)
 
-# 상대기업(실제 티커가 있는 것만)이 많을 때만 섹터를 조회해 그래프에서 묶는다 — 회사
-# 수가 적으면 한 링에 다 들어가서 묶어도 얻는 게 없고, yfinance 호출도 그만큼 아낀다.
-sectors = {}
-if len(ticker_like) > SECTOR_CLUSTER_THRESHOLD:
-    sector_cache_key = (ticker, tuple(ticker_like))
-    if st.session_state.get("relationship_sector_key") != sector_cache_key:
-        with st.spinner("섹터 정보 불러오는 중..."):
-            sectors = get_sectors(ticker_like)
-        st.session_state.update(relationship_sectors=sectors, relationship_sector_key=sector_cache_key)
-    else:
-        sectors = st.session_state.get("relationship_sectors", {})
-
-graph_event = st.plotly_chart(
-    render_relationship_graph_figure(
-        ticker, hub_name, visible_edges,
-        logos=st.session_state.get("relationship_logos", {}), sectors=sectors,
-    ),
-    use_container_width=True, config=STATIC_PLOTLY_CONFIG,
-    on_select="rerun", selection_mode="points", key="relationship_graph_select",
+render_relationship_legend(visible_edges)
+clicked_ticker = render_relationship_network(
+    ticker, hub_name, visible_edges,
+    logos=st.session_state.get("relationship_logos", {}), key=f"relgraph_{ticker}",
 )
 # 노드 클릭 시 그 회사로 검색 이동 — 사이드바 미니 검색창(search.py::render_sidebar_search)과
 # 완전히 같은 로직(fetch_and_store_ticker → step="intro" → switch_page)을 그대로 재사용한다.
-# customdata는 상대기업 노드에만 있고(charts.py) 허브·범례 트레이스엔 없어서, 그쪽을 눌러도
-# 여긴 조용히 아무 일도 안 한다.
-clicked_points = (graph_event or {}).get("selection", {}).get("points", [])
-if clicked_points:
-    clicked = clicked_points[0].get("customdata")
-    clicked_ticker = clicked[0] if isinstance(clicked, list) else clicked
-    if clicked_ticker and fetch_and_store_ticker(clicked_ticker):
-        st.session_state.step = "intro"
-        st.switch_page("app.py")
+# 허브를 클릭했을 때는 컴포넌트 쪽에서 이미 None을 돌려주므로(자기 자신 재검색 방지) 여기서
+# 따로 걸러줄 필요가 없다.
+if clicked_ticker and fetch_and_store_ticker(clicked_ticker):
+    st.session_state.step = "intro"
+    st.switch_page("app.py")
 
-caption = (
-    "노드를 클릭하면 그 회사로 이동, 마우스를 올리면 요약이 보입니다. 화살표는 방향이 공식 "
-    "근거로 확인된 관계에만 표시됩니다 — 나머지는 선만 있습니다. 전체 근거와 원문 링크는 "
-    "아래 표에 있습니다."
+st.caption(
+    "노드를 드래그해서 움직이거나 휠로 확대/축소할 수 있습니다. 클릭하면 그 회사로 이동, "
+    "마우스를 올리면 요약이 보입니다. 화살표는 방향이 공식 근거로 확인된 관계에만 "
+    "표시됩니다 — 나머지는 선만 있습니다. 전체 근거와 원문 링크는 아래 표에 있습니다."
 )
-# 섹터가 실제로 2종류 이상 나와야 클러스터링이 눈에 보이는 효과가 있다 — 다 조회했는데
-# 전부 못 찾았거나(sectors 값이 죄다 None) 한 섹터뿐이면 "묶어서 배치했다"는 문구가
-# 오히려 과장이 된다.
-if len({v for v in sectors.values() if v}) > 1:
-    caption += " 상대기업이 많아 같은 섹터끼리 묶어서 배치했습니다."
-st.caption(caption)
 
 # --- 상대회사 자체 뉴스로 문맥 보강 (사용자 피드백: SEC 발췌만으로는 무슨 관계인지
 # 알아내는 데 개인 노력이 든다) — 뉴스 근거가 아직 없는 상대기업 중 상위 몇 개에만, 그

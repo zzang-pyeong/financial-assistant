@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; font-family: 'IBM Plex Sans KR', sans-serif; }
+  #network { width: 100%; }
+  #fallback {
+    display: none; padding: 1rem; color: #6b7280; font-size: 0.9rem;
+  }
+  /* vis-network의 기본 tooltip은 흰 배경/얇은 테두리라 앱 다른 hover(재무제표 차트 등)와
+     톤을 맞춘다. white-space:normal이 핵심 — 안 주면 우리가 넣은 <br>만 줄바꿈되고
+     긴 문장 자체는 안 잘려서 말풍선이 화면 밖으로 삐져나간다. */
+  div.vis-tooltip {
+    max-width: 340px !important; white-space: normal !important;
+    font-family: 'IBM Plex Sans KR', sans-serif !important; font-size: 12px !important;
+    line-height: 1.5 !important; padding: 10px 12px !important;
+    border: 1px solid #e5e7eb !important; border-radius: 8px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12) !important;
+  }
+</style>
+</head>
+<body>
+<div id="network"></div>
+<div id="fallback">그래프 라이브러리(vis-network)를 불러오지 못했습니다 — 네트워크 연결을 확인하고 새로고침해 주세요.</div>
+
+<script src="https://unpkg.com/vis-network@9/standalone/umd/vis-network.min.js"></script>
+<script>
+/* ---------------------------------------------------------------------------
+ * Streamlit 커스텀 컴포넌트 프로토콜을 손으로 구현한다(공식 streamlit-component-lib
+ * npm 패키지 없이) — 이 컴포넌트는 순수 정적 HTML 파일 하나라 빌드 단계가 없다.
+ * 프로토콜 자체는 postMessage 기반으로 안정적이라 손으로 짜도 문제없다:
+ *   1) 로드 시 componentReady를 부모(Streamlit)에 보낸다.
+ *   2) 부모가 render 이벤트로 args(nodes/edges/height 등)를 보내준다.
+ *   3) 높이가 바뀌면 setFrameHeight를 보낸다.
+ *   4) 노드 클릭 시 setComponentValue로 티커를 돌려보낸다.
+ * ------------------------------------------------------------------------- */
+function sendToStreamlit(type, extra) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra), "*");
+}
+sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
+
+let visNetwork = null;
+
+function buildTitleEl(html) {
+  if (!html) return undefined;
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return div;
+}
+
+function render(args) {
+  if (typeof vis === "undefined") {
+    document.getElementById("fallback").style.display = "block";
+    sendToStreamlit("streamlit:setFrameHeight", { height: 80 });
+    return;
+  }
+
+  const nodesData = (args.nodes || []).map(function (n) {
+    const node = Object.assign({}, n);
+    node.title = buildTitleEl(n.titleHtml);
+    delete node.titleHtml;
+    return node;
+  });
+  const edgesData = args.edges || [];
+
+  const nodes = new vis.DataSet(nodesData);
+  const edges = new vis.DataSet(edgesData);
+
+  const options = {
+    nodes: {
+      borderWidth: 2, borderWidthSelected: 3,
+      font: { face: "IBM Plex Sans KR, sans-serif", size: 13, color: "#3c4043" },
+    },
+    edges: {
+      width: 1.6, smooth: { type: "continuous", roundness: 0.35 },
+      hoverWidth: 2.2, selectionWidth: 2.2,
+    },
+    physics: {
+      solver: "barnesHut",
+      barnesHut: { gravitationalConstant: -4200, springLength: 130, springConstant: 0.03, avoidOverlap: 0.4 },
+      stabilization: { iterations: 150 },
+    },
+    interaction: {
+      hover: true, dragNodes: true, dragView: true, zoomView: true,
+      tooltipDelay: 120, navigationButtons: false, keyboard: false,
+    },
+    layout: { improvedLayout: true },
+  };
+
+  const container = document.getElementById("network");
+  visNetwork = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+  window.__visNetwork = visNetwork; // 디버깅/자동화 검증용 훅 — window.network은 <div id="network">에 DOM clobbering으로 이미 점유돼 있어 못 씀
+
+  visNetwork.on("click", function (params) {
+    if (!params.nodes || params.nodes.length === 0) return;
+    const clickedId = params.nodes[0];
+    if (clickedId === args.hubId) return; // 허브 클릭은 아무 동작 없음(자기 자신으로 재검색 방지)
+    sendToStreamlit("streamlit:setComponentValue", { value: clickedId, dataType: "json" });
+  });
+
+  // 물리 시뮬레이션이 안정화되면(또는 일정 시간 후 강제로) 고정 프레임 높이를 보고한다 —
+  // 계속 흔들리는 동안 매 프레임 리사이즈를 보내면 페이지가 들썩인다.
+  const height = args.height || 520;
+  container.style.height = height + "px";
+  let reported = false;
+  function reportHeight() {
+    if (reported) return;
+    reported = true;
+    sendToStreamlit("streamlit:setFrameHeight", { height: height });
+  }
+  visNetwork.once("stabilizationIterationsDone", reportHeight);
+  setTimeout(reportHeight, 1500); // 안정화가 오래 걸리는 큰 그래프 대비 안전장치
+}
+
+window.addEventListener("message", function (event) {
+  const data = event.data;
+  if (!data || data.type !== "streamlit:render") return;
+  render(data.args || {});
+});
+</script>
+</body>
+</html>
