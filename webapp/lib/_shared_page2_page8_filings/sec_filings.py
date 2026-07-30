@@ -595,20 +595,38 @@ _ATM_HEADLINE_WINDOW = 400
 _FIXED_OFFER_WINDOW = 4000
 
 
+def _abbreviate_number(num_str):
+    """"30,000,000.15" 같은 원문 숫자 문자열을 30.0M처럼 축약. 콤마 있는 큰 총액/주식수는
+    한눈에 안 들어와서(사용자 피드백) K/M/B로 줄인다 — 파싱 실패 시 원문 그대로 반환."""
+    try:
+        n = float(num_str.replace(",", ""))
+    except ValueError:
+        return num_str
+    if abs(n) >= 1e9:
+        return f"{n / 1e9:,.1f}B"
+    if abs(n) >= 1e6:
+        return f"{n / 1e6:,.1f}M"
+    if abs(n) >= 1e3:
+        return f"{n / 1e3:,.1f}K"
+    return f"{n:,.0f}"
+
+
 def _extract_offering_detail(raw_html):
     """표지에서 뽑아낸 실제 공모 조건 요약 문자열, 못 뽑으면 None."""
     cleaned = clean_fragment(raw_html)
     m = _ATM_CAP_HEADLINE_RE.search(cleaned[:_ATM_HEADLINE_WINDOW])
     if m:
-        return f"최대 ${m.group(1)} 규모 시장가매도(ATM)·Shelf 한도"
+        return f"최대 ${_abbreviate_number(m.group(1))} 규모 시장가매도(ATM)·Shelf 한도"
 
     window = cleaned[:_FIXED_OFFER_WINDOW]
     shares_m = _FIXED_OFFER_SHARES_RE.search(window)
     price_m = _OFFER_PRICE_TABLE_RE.search(window)
     if shares_m and price_m:
-        return f"{shares_m.group(1)}주 · 주당 ${price_m.group(1)} · 총 ${price_m.group(2)}"
+        shares = _abbreviate_number(shares_m.group(1))
+        total = _abbreviate_number(price_m.group(2))
+        return f"{shares}주 · 주당 ${price_m.group(1)} · 총 ${total}"
     if shares_m:
-        return f"{shares_m.group(1)}주 발행(공모가 미확인)"
+        return f"{_abbreviate_number(shares_m.group(1))}주 발행(공모가 미확인)"
     return None
 
 
@@ -726,11 +744,9 @@ def find_capital_raise_filings(ticker, lookback_days=365):
             f"{accession_no_dashes}/{f['accession']}-index.htm"
         )
         label = _CAPITAL_RAISE_FORM_LABELS.get(form, form)
-        headline = f"{form} 공시 — {label}"
-        if detail:
-            headline += f" ({detail})"
         results.append({
-            "headline": headline,
+            "headline": f"{form} 공시 — {label}",
+            "detail": detail,
             "source": "SEC EDGAR",
             "datetime": _file_date_to_epoch(f["date"]) if f.get("date") else None,
             "url": url,
