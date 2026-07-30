@@ -11,6 +11,7 @@ from lib._shared_core.page_helpers import (
     require_analysis, news_date_str, inject_base_styles, render_wordmark, render_ticker_header,
 )
 from lib._shared_core.search import render_sidebar
+from lib._shared_page2_page8_filings.sec_filings import find_capital_raise_filings
 
 st.set_page_config(page_title="Company Events — EnterTicker", layout="wide")
 inject_base_styles()
@@ -46,3 +47,27 @@ if corporate_events:
         st.caption(f"분류: {cats} · _({ev['source']})_")
 else:
     st.caption("해당 기간 내 M&A·경영진 교체·신규 계약 관련 뉴스 없음")
+
+st.divider()
+st.markdown("#### 유상증자·자본조달 공시")
+st.caption(
+    "최근 1년 내 S-1·S-3·424B(신주·회사채 등록/공모) SEC 공시 목록입니다. 뉴스 키워드가 "
+    "아니라 공시 폼타입 자체를 근거로 하며, 공시가 있었다는 사실만 보여줍니다 — 실제 발행 "
+    "여부·규모·조건은 원문(링크)에서 확인하세요."
+)
+if st.session_state.get("capital_raise_filings_ticker") != ticker:
+    with st.spinner("SEC 등록/공모 공시(S-1·S-3·424B) 확인 중..."):
+        capital_raise_filings = find_capital_raise_filings(ticker)
+    st.session_state.update(
+        capital_raise_filings=capital_raise_filings, capital_raise_filings_ticker=ticker,
+    )
+capital_raise_filings = st.session_state.get("capital_raise_filings", [])
+if capital_raise_filings:
+    for ev in capital_raise_filings:
+        title = f"[{ev['headline']}]({ev['url']})" if ev.get("url") else ev["headline"]
+        date_str = news_date_str(ev)
+        date_part = f" ({date_str})" if date_str else ""
+        st.write(f"- {title}{date_part}")
+        st.caption(f"_({ev['source']})_")
+else:
+    st.caption("해당 기간 내 S-1·S-3·424B 공시 없음")

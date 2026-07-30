@@ -542,6 +542,112 @@ def find_beneficial_owners(ticker):
 
 
 # ---------------------------------------------------------------------------
+# 자본조달(유상증자·회사채 등록) 공시 — Company Events 페이지 보강 (2026-07-30).
+# 사용자 피드백: 뉴스 기반 M&A/파트너십/경영진 교체만으론 내용이 빈약함. 유상증자를
+# 영문 뉴스 키워드("public offering"/"secondary offering"/"private placement"...)로
+# 잡으려 하면 표현이 제각각이라 재현율이 낮고 오탐도 늘어난다 — 대신 _list_13d_13g_filings
+# 와 같은 "검색어 없이 폼타입으로 이 회사 관련 공시 전부"를 주는 방식을 재사용한다.
+# S-1/S-3(등록)·424B*(등록에 따른 최종 투자설명서)는 등록 대상이 신주(유상증자)든
+# 회사채든 같은 폼타입을 쓰므로, 폼타입 존재 자체가 "기업 재무" 신호로 충분하다.
+# 8-K는 제외 — 폼타입만으로는 Item 번호(자본조달 관련 Item 3.02/2.03 여부)를 알 수 없어
+# 대부분이 자본조달과 무관한 다른 사유(계약 체결·경영진 변경 등)라 오탐이 너무 커진다.
+_CAPITAL_RAISE_FORMS = ("S-1", "S-3", "S-3ASR", "424B1", "424B2", "424B3", "424B4", "424B5")
+_CAPITAL_RAISE_CATEGORY = "유상증자·자본조달"
+_CAPITAL_RAISE_FORM_LABELS = {
+    "S-1": "신규 증권 등록",
+    "S-3": "간이 증권 등록(Shelf)",
+    "S-3ASR": "간이 증권 등록(즉시효력, 대형사 전용)",
+    "424B1": "투자설명서(공모 실행)",
+    "424B2": "투자설명서(공모 실행)",
+    "424B3": "투자설명서(공모 실행)",
+    "424B4": "투자설명서(공모 실행)",
+    "424B5": "투자설명서 보충(Shelf 공모 실행)",
+}
+_MAX_CAPITAL_RAISE_FILINGS = 15
+
+
+def _list_capital_raise_filings(cik, lookback_days=365):
+    """대상 CIK의 최근 lookback_days 안 S-1/S-3/424B* 공시 목록을 _list_13d_13g_filings와
+    같은 방식(검색어 없는 폼타입별 Atom 피드)으로 가져온다. 폼타입이 8종이라 순차 호출
+    대신 병렬로 가져온다."""
+    if not cik:
+        return []
+    cutoff = date.today() - timedelta(days=lookback_days)
+
+    def _fetch_one(form_type):
+        try:
+            r = requests.get(
+                "https://www.sec.gov/cgi-bin/browse-edgar",
+                params={
+                    "action": "getcompany", "CIK": cik, "type": form_type,
+                    "dateb": "", "owner": "include", "count": 40, "output": "atom",
+                },
+                headers={"User-Agent": _USER_AGENT}, timeout=10,
+            )
+            return r.text
+        except Exception:
+            return ""
+
+    seen = set()
+    filings = []
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+        for text in executor.map(_fetch_one, _CAPITAL_RAISE_FORMS):
+            for m in _ATOM_ENTRY_RE.finditer(text):
+                block = m.group(1)
+                accession = _extract_pattern(_ATOM_FIELD_RES["accession"], block)
+                fdate = _extract_pattern(_ATOM_FIELD_RES["date"], block)
+                if not accession or accession in seen:
+                    continue
+                if fdate:
+                    try:
+                        if datetime.strptime(fdate, "%Y-%m-%d").date() < cutoff:
+                            continue
+                    except Exception:
+                        pass
+                seen.add(accession)
+                filings.append({
+                    "accession": accession,
+                    "form": _extract_pattern(_ATOM_FIELD_RES["type"], block),
+                    "date": fdate,
+                })
+    filings.sort(key=lambda f: f.get("date") or "", reverse=True)
+    return filings[:_MAX_CAPITAL_RAISE_FILINGS]
+
+
+def find_capital_raise_filings(ticker, lookback_days=365):
+    """티커의 S-1/S-3/424B* 공시를 Company Events 카드 형식(headline/source/datetime/url/
+    categories)으로 반환한다. CIK를 못 찾거나 요청이 실패하면 조용히 빈 리스트 — "공시가
+    없다"와 "확인 못 했다"를 화면에서 구분하진 않지만, 둘 다 과확신(허위 이벤트 표시)보다
+    안전한 쪽으로 fail한다."""
+    cik = get_cik(ticker)
+    if not cik:
+        return []
+    try:
+        filings = _list_capital_raise_filings(cik, lookback_days)
+    except Exception:
+        return []
+    cik_no_padding = str(int(cik))
+    results = []
+    for f in filings:
+        form = f["form"] or "?"
+        accession_no_dashes = f["accession"].replace("-", "")
+        url = (
+            f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/"
+            f"{accession_no_dashes}/{f['accession']}-index.htm"
+        )
+        label = _CAPITAL_RAISE_FORM_LABELS.get(form, form)
+        results.append({
+            "headline": f"{form} 공시 — {label}",
+            "source": "SEC EDGAR",
+            "datetime": _file_date_to_epoch(f["date"]) if f.get("date") else None,
+            "url": url,
+            "summary": None,
+            "categories": [{"category": _CAPITAL_RAISE_CATEGORY, "matched": [form]}],
+        })
+    return results
+
+
+# ---------------------------------------------------------------------------
 # 문맥 추출 — 검색 API는 스니펫을 안 줘서(실측 확인), 문서 원문을 받아 회사명 주변을
 # 직접 잘라낸다. re + html + codecs(전부 표준 라이브러리)만 사용 — 새 의존성 없음.
 #
@@ -590,6 +696,25 @@ _NOISE_KEYWORDS_RE = re.compile(
     r'\balleg\w*\b|\blitigation\b',
     re.IGNORECASE,
 )
+
+# 임원·이사 경력 소개 문단 (2026-07-30, 실측: AMAT↔Shopify가 "공시 내 언급"으로 잡힘 —
+# 실제로는 Shopify 이사 소개란에 "...previously served as Division CFO and in other
+# financial leadership roles at Applied Materials, Visa, and United Technologies"였다).
+# 이런 문단은 회사 간 관계를 전혀 설명하지 않는데도(그냥 한 사람의 과거 직장 나열)
+# _NOISE_KEYWORDS_RE(경쟁사·소송)에는 안 걸려서 그대로 "공시 내 언급"으로 노출된다.
+# 관계도 표에 뜨는 다른 노이즈(경쟁사 나열 등)는 그나마 "두 회사가 같은 업계"라는 정보는
+# 있지만, 경력 소개는 그 회사 자체와도 무관해서 승격 차단만으론 부족하다 — 아예 목록에서
+# 빼야 한다(drop_biographical_mentions 참고).
+_BIOGRAPHICAL_MENTION_RE = re.compile(
+    r'\bage\s+\d{2}\b|'
+    r'\bprior to joining\b|'
+    r'\bpreviously served\b|'
+    r'\b(?:has been|is)\s+a\s+member of\s+(?:our|the)\s+[Bb]oard\b|'
+    r'\bleadership roles?\s+at\b|'
+    r'\bserved as\b(?:\s+\S+){0,10}?\s+Chief\s+\w+\s+Officer\b|'
+    r'\bspent\s+(?:more than\s+)?(?:a\s+decade|\d+\s+years?)\s+in\s+',
+    re.IGNORECASE,
+)
 # 문장 앞쪽 이 정도 범위 안에서 가장 최근에 나온 "Item N" 헤더를 찾아 그 섹션 안에 있다고
 # 본다. 10-K/10-Q의 Item 1A(Risk Factors)·Item 3(Legal Proceedings)는 회사 이름이 실제
 # 거래 내용과 무관하게(경쟁사 나열, 소송 상대) 자주 등장하는 섹션이라 감점한다. 헤더
@@ -612,6 +737,12 @@ def _score_sentence(sentence, tail, pos):
     고르는 상대 비교용일 뿐, 절대적인 신뢰도 지표는 아니다."""
     score = len(_DEAL_KEYWORDS_RE.findall(sentence))
     score -= 2 * len(_NOISE_KEYWORDS_RE.findall(sentence))
+    # 같은 문서 안에 임원 경력 소개 말고 다른 후보 문장이 있으면(예: 이사 소개란과 별개로
+    # 실제 거래를 설명하는 문장도 있는 회사) 그쪽이 더 높은 점수를 받도록 감점만 해두고
+    # 완전히 배제하지는 않는다 — 완전 배제는 drop_biographical_mentions()가 담당(문서
+    # 전체에 경력 소개 문장뿐인 경우까지 걸러내려면 스코어링만으론 부족하기 때문).
+    if _BIOGRAPHICAL_MENTION_RE.search(sentence):
+        score -= 2
     score += _section_penalty(tail, pos)
     return score
 
@@ -673,6 +804,24 @@ def attach_context_snippets(filing_edges, max_companies=_MAX_SNIPPET_COMPANIES):
             if snippet:
                 edge["context"] = snippet
     return filing_edges
+
+
+def drop_biographical_mentions(filing_edges):
+    """attach_context_snippets() 다음, promote_mentions_with_context() 전에 호출한다.
+    문맥이 임원·이사 경력 소개(_BIOGRAPHICAL_MENTION_RE)로 판정된 상대회사는 그 회사와
+    관련된 엣지 전부를 목록에서 뺀다 — 문맥을 확보한 엣지(회사당 1건, attach_context_
+    snippets 참고) 하나만 지우면 같은 회사의 다른 날짜 언급이 문맥 없이 남아 "공시 내
+    언급 포함" 토글에서 여전히 보이므로, 그 회사 자체를 후보에서 제외한다. 승격 차단
+    (promote_mentions_with_context의 _BIOGRAPHICAL_MENTION_RE 점수 감점)과 달리 이건
+    D등급 "공시 내 언급"으로도 노출을 안 시킨다 — 경력 소개는 두 회사 관계에 대해 아무
+    신호도 안 주기 때문(경쟁사 나열처럼 "같은 업계"라는 정보조차 없음)."""
+    biographical_tickers = {
+        e["counterparty_ticker"] for e in filing_edges
+        if e.get("context") and _BIOGRAPHICAL_MENTION_RE.search(e["context"])
+    }
+    if not biographical_tickers:
+        return filing_edges
+    return [e for e in filing_edges if e["counterparty_ticker"] not in biographical_tickers]
 
 
 # ---------------------------------------------------------------------------
