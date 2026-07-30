@@ -33,15 +33,34 @@ def inject_base_styles():
     )
 
 
-def render_wordmark(first, second, size="2.2rem", align="left", margin="0 0 1rem 0", sep=" "):
+def render_wordmark(first, second, size="2.2rem", align="left", margin="0 0 1rem 0", sep=" ", subtitle=None):
     """EnterTicker/Conflict Point와 같은 타이포그래피 스타일의 2단어 워드마크.
-    두 번째 단어만 브랜드 블루로 강조. sep="" 이면 EnterTicker처럼 붙여 쓴다."""
+    두 번째 단어만 브랜드 블루로 강조. sep="" 이면 EnterTicker처럼 붙여 쓴다.
+    subtitle이 있으면 워드마크 바로 아래 옅은 회색 소문자·자간 넓은 태그라인으로 붙인다
+    (예: 시작 화면의 "Only for Nasdaq")."""
+    subtitle_html = (
+        f"<div style='margin-top:0.35em; font-size:{_subtitle_size(size)}; "
+        "font-weight:500; letter-spacing:0.12em; text-transform:uppercase; "
+        f"color:#9aa0a6;'>{subtitle}</div>"
+        if subtitle else ""
+    )
     st.markdown(
-        f"<div style='text-align:{align}; margin:{margin}; font-size:{size}; "
-        f"font-weight:700; letter-spacing:-0.02em;'>"
-        f"{first}{sep}<span style='color:#2f6fed;'>{second}</span></div>",
+        f"<div style='text-align:{align}; margin:{margin};'>"
+        f"<div style='font-size:{size}; font-weight:700; letter-spacing:-0.02em;'>"
+        f"{first}{sep}<span style='color:#2f6fed;'>{second}</span></div>"
+        f"{subtitle_html}</div>",
         unsafe_allow_html=True,
     )
+
+
+def _subtitle_size(wordmark_size):
+    """워드마크 크기에 비례한 부제 크기 — rem 단위 숫자만 뽑아 대략 1/12로 줄인다.
+    파싱 실패(다른 단위 등)하면 무난한 기본값으로 폴백."""
+    try:
+        value = float(wordmark_size.replace("rem", "").strip())
+        return f"{max(0.7, round(value / 12, 2))}rem"
+    except (ValueError, AttributeError):
+        return "0.85rem"
 
 
 def render_ticker_header(ticker, suffix=None):

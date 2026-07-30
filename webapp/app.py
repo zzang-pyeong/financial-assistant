@@ -118,7 +118,10 @@ if "ticker" in st.session_state:
 # SEARCH: 티커 검색 — 포지션 선택 없이 바로 비교 화면으로
 # ----------------------------------------------------------------------------
 if st.session_state.step == "search":
-    render_wordmark("Enter", "Ticker", size="3.4rem", align="center", margin="8vh 0 2rem 0", sep="")
+    render_wordmark(
+        "Enter", "Ticker", size="3.4rem", align="center", margin="8vh 0 2rem 0", sep="",
+        subtitle="Only for <span style='color:#2f6fed;'>Nasdaq</span>",
+    )
 
     st.markdown(
         '<style>'
