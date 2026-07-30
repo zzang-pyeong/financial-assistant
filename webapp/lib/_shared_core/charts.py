@@ -292,9 +292,10 @@ def group_relationship_edges(edges):
 
 # ---------------------------------------------------------------------------
 # 관계도 렌더링 — vis-network.js (2026-07-29, EveryTie 참고로 Plotly 고정 링 배치에서
-# 교체). 물리 기반 force-directed 레이아웃이라 드래그·확대·자연스러운 군집이 전부
-# 공짜로 딸려온다 — 예전엔 이걸 전부 손으로 계산했다(_node_positions 각도/반지름 수학,
-# cluster_by_sector 섹터 재배열). 컴포넌트 코드는
+# 교체). 물리 기반 force-directed 레이아웃이라 드래그·자연스러운 군집이 전부 공짜로
+# 딸려온다 — 예전엔 이걸 전부 손으로 계산했다(_node_positions 각도/반지름 수학,
+# cluster_by_sector 섹터 재배열). 휠 확대/축소는 꺼져 있다 — 그래프 위에서 페이지를
+# 스크롤할 때 휠을 그래프가 가로채던 문제 때문(사용자 피드백). 컴포넌트 코드는
 # lib/page8_only_relationship/relationship_graph_component/index.html.
 # ---------------------------------------------------------------------------
 _COMPONENT_DIR = (

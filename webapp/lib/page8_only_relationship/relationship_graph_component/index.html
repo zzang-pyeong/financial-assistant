@@ -82,7 +82,10 @@ function render(args) {
       stabilization: { iterations: 150 },
     },
     interaction: {
-      hover: true, dragNodes: true, dragView: true, zoomView: true,
+      // zoomView: false — 휠 확대/축소를 껐다. 그래프 위에 커서가 있는 채로 페이지를
+      // 스크롤하면 휠 이벤트를 그래프가 가로채 확대/축소로 먹어버려서 페이지가 안
+      // 내려가던 문제(사용자 피드백). 드래그로 이동/패닝은 그대로 된다.
+      hover: true, dragNodes: true, dragView: true, zoomView: false,
       tooltipDelay: 120, navigationButtons: false, keyboard: false,
     },
     layout: { improvedLayout: true },
@@ -92,10 +95,34 @@ function render(args) {
   visNetwork = new vis.Network(container, { nodes: nodes, edges: edges }, options);
   window.__visNetwork = visNetwork; // 디버깅/자동화 검증용 훅 — window.network은 <div id="network">에 DOM clobbering으로 이미 점유돼 있어 못 씀
 
+  // vis-network의 클릭 판정(isOverlappingWith)은 노드 도형(로고 원)의 정확한 경계만 보고
+  // 여유(padding)가 전혀 없다 — 원 정중앙을 정확히 못 맞히면(로고가 작아서 실제로 자주
+  // 있는 일) 반응이 없고, 원 아래에 그려지는 라벨(티커 텍스트)은 애초에 판정 대상도 아니다
+  // (둘 다 사용자 피드백: 로고를 눌러도 안 눌리고, 티커를 눌러도 안 눌림). 네이티브 클릭이
+  // 실패했을 때만 이 보정을 타서, 로고 주변 약간의 여유 + 라벨이 그려지는 영역까지 같이
+  // 검사한다.
+  function nodeIdNearLabel(domPoint) {
+    const scale = visNetwork.getScale();
+    const positions = visNetwork.getPositions();
+    for (const id in positions) {
+      const domPos = visNetwork.canvasToDOM(positions[id]);
+      const radius = (nodes.get(id).size || 25) * scale;
+      const dx = domPoint.x - domPos.x;
+      const dy = domPoint.y - domPos.y;
+      if (Math.hypot(dx, dy) <= radius + 6) return id; // 로고 원 주변 약간의 여유
+      const labelTop = domPos.y + radius;
+      const labelBottom = labelTop + 10 + 16 * scale; // 라벨 상하 여백 + 글자 높이 대략치
+      if (Math.abs(dx) <= radius + 20 && domPoint.y >= labelTop - 2 && domPoint.y <= labelBottom) return id;
+    }
+    return undefined;
+  }
+
   visNetwork.on("click", function (params) {
-    if (!params.nodes || params.nodes.length === 0) return;
-    const clickedId = params.nodes[0];
-    if (clickedId === args.hubId) return; // 허브 클릭은 아무 동작 없음(자기 자신으로 재검색 방지)
+    let clickedId = params.nodes && params.nodes.length > 0 ? params.nodes[0] : undefined;
+    if (clickedId === undefined) {
+      clickedId = nodeIdNearLabel(params.pointer.DOM);
+    }
+    if (clickedId === undefined || clickedId === args.hubId) return; // 허브 클릭은 아무 동작 없음(자기 자신으로 재검색 방지)
     sendToStreamlit("streamlit:setComponentValue", { value: clickedId, dataType: "json" });
   });
 
