@@ -18,7 +18,8 @@ from lib._shared_core.charts import (
 )
 from lib._shared_core.known_companies import STATIC_KNOWN_COMPANIES
 from lib._shared_page2_page8_filings.sec_filings import (
-    find_filing_relationships, attach_context_snippets, promote_mentions_with_context,
+    find_filing_relationships, attach_context_snippets, drop_biographical_mentions,
+    promote_mentions_with_context,
     find_beneficial_owners,
 )
 from lib.page8_only_relationship.logos import get_circular_logos
@@ -87,6 +88,11 @@ if st.session_state.get("filing_edges_ticker") != ticker:
     filing_edges = find_filing_relationships(ticker, hub_name, known, on_progress=_on_progress)
     progress.progress(1.0, text="공시 원문에서 계약 문맥 확인 중...")
     filing_edges = attach_context_snippets(filing_edges)
+    # 문맥이 임원·이사 경력 소개(그 사람의 과거 직장 나열)로 판정되면 관계 후보에서 아예
+    # 제외 — 실측: AMAT↔Shopify가 "공시 내 언급"으로 잡혔는데 실제로는 Shopify 이사 소개란의
+    # "...previously served as ... at Applied Materials, Visa, and United Technologies"였다
+    # (사용자 피드백: "공시 내 언급"만으로는 이런 노이즈가 너무 많아 신뢰도가 낮다).
+    filing_edges = drop_biographical_mentions(filing_edges)
     # 문맥에 거래 관련 키워드가 있으면 "공시 내 언급"(기본 숨김)에서 구체적 관계 유형으로
     # 승격 — CoreWeave/IREN처럼 실제 공급·고객 관계로 보이는 회사가 단순 언급으로만
     # 잡혀 기본 화면에서 안 보이던 문제(사용자 피드백)를 해결한다.

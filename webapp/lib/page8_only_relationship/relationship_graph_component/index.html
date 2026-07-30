@@ -134,6 +134,12 @@ function render(args) {
   function reportHeight() {
     if (reported) return;
     reported = true;
+    // vis-network는 안정화가 끝나도 뷰를 전체 그래프에 자동으로 맞춰주지 않는다 —
+    // barnesHut 반발력이 강하게 튄 노드가 있으면 확대된 채로 시작해서 허브만 화면을 꽉
+    // 채우고 나머지 노드는 잘려 보이는 문제(사용자 스크린샷으로 확인). 게다가 휠 확대/축소를
+    // 꺼놨기 때문에(zoomView: false) 사용자가 수동으로 축소해서 되돌릴 방법도 없다 — fit()을
+    // 명시적으로 불러 전체 그래프가 항상 한 화면에 들어오게 강제한다.
+    visNetwork.fit({ animation: false });
     sendToStreamlit("streamlit:setFrameHeight", { height: height });
   }
   visNetwork.once("stabilizationIterationsDone", reportHeight);
