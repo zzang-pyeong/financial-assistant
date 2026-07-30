@@ -39,7 +39,7 @@ if corporate_events:
         prefetch_korean([ev["headline"] for ev in shown])
     for ev in shown:
         cats = ", ".join(f"{c['category']}({', '.join(c['matched'])})" for c in ev["categories"])
-        headline = to_korean(ev["headline"])
+        headline = to_korean(ev["headline"]).replace("$", "\\$")
         title = f"[{headline}]({ev['url']})" if ev.get("url") else headline
         date_str = news_date_str(ev)
         date_part = f" ({date_str})" if date_str else ""
@@ -64,7 +64,8 @@ if st.session_state.get("capital_raise_filings_ticker") != ticker:
 capital_raise_filings = st.session_state.get("capital_raise_filings", [])
 if capital_raise_filings:
     for ev in capital_raise_filings:
-        title = f"[{ev['headline']}]({ev['url']})" if ev.get("url") else ev["headline"]
+        headline = ev["headline"].replace("$", "\\$")
+        title = f"[{headline}]({ev['url']})" if ev.get("url") else headline
         date_str = news_date_str(ev)
         date_part = f" ({date_str})" if date_str else ""
         st.write(f"- {title}{date_part}")

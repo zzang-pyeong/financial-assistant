@@ -565,6 +565,77 @@ _CAPITAL_RAISE_FORM_LABELS = {
 }
 _MAX_CAPITAL_RAISE_FILINGS = 15
 
+# 표지(커버 페이지)에서 실제 공모 조건을 뽑는다 — 실측(2026-07-30)으로 확인한 두 형식만
+# 다룬다. 조건이 이 형식과 다르면(회사/주관사마다 표지 템플릿이 제각각) 억지로
+# 끼워맞추지 않고 폼타입만 보여준다("모르면 모른다").
+#   1) ATM(시장가 매도)·Shelf 한도형 — 예: IREN 2026-07-28 424B5
+#      표지 맨 앞머리("회사명 Up to $6,000,000,000 Ordinary Shares")에 현재 유효한
+#      한도가 나온다. 본문에는 "이전 한도는 얼마였고 이번에 얼마로 늘렸다"는 식으로
+#      과거 한도 문구가 먼저 나올 수 있어(실측: IREN이 $1B→$6B로 증액) 본문 아무 데서나
+#      "aggregate offering price of up to $X"를 찾으면 옛 숫자를 잘못 고를 위험이 있다.
+#      그래서 표지 맨 앞(첫 문장)만 본다.
+#   2) 확정가 공모형 — 예: INVZ 2026-07-28 424B5
+#      "~is offering N ordinary shares"(주식수) + "Offering price $단가 $총액"
+#      (표 형태) 두 문구가 모두 있어야만 확정 조건으로 인정한다.
+_ATM_CAP_HEADLINE_RE = re.compile(
+    r"\bUp to \$\s*([\d,]+(?:\.\d+)?)\s+"
+    r"(?:Ordinary Shares|Shares of Common Stock|Common Shares|Shares)",
+    re.IGNORECASE,
+)
+_FIXED_OFFER_SHARES_RE = re.compile(
+    r"(?:is|are)\s+(?:offering|selling)\s+([\d,]{4,})\s+"
+    r"(?:of\s+(?:its|our)\s+)?(?:ordinary shares|shares of common stock|common shares|shares|units)",
+    re.IGNORECASE,
+)
+_OFFER_PRICE_TABLE_RE = re.compile(
+    r"Offering price\s*\$\s*([\d]+(?:\.\d+)?)\s+\$\s*([\d,]+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_ATM_HEADLINE_WINDOW = 400
+_FIXED_OFFER_WINDOW = 4000
+
+
+def _extract_offering_detail(raw_html):
+    """표지에서 뽑아낸 실제 공모 조건 요약 문자열, 못 뽑으면 None."""
+    cleaned = clean_fragment(raw_html)
+    m = _ATM_CAP_HEADLINE_RE.search(cleaned[:_ATM_HEADLINE_WINDOW])
+    if m:
+        return f"최대 ${m.group(1)} 규모 시장가매도(ATM)·Shelf 한도"
+
+    window = cleaned[:_FIXED_OFFER_WINDOW]
+    shares_m = _FIXED_OFFER_SHARES_RE.search(window)
+    price_m = _OFFER_PRICE_TABLE_RE.search(window)
+    if shares_m and price_m:
+        return f"{shares_m.group(1)}주 · 주당 ${price_m.group(1)} · 총 ${price_m.group(2)}"
+    if shares_m:
+        return f"{shares_m.group(1)}주 발행(공모가 미확인)"
+    return None
+
+
+def _primary_capital_raise_doc_url(cik, accession, form):
+    """이 공시의 본문 문서(표지가 있는 실제 프로스펙터스) URL. 인덱스 표의 "Type" 열이
+    폼타입과 정확히 일치하는 문서를 우선하고, 없으면 첫 .htm/.html 중 부속서류(Exhibit)가
+    아닌 것을 고른다."""
+    docs = _list_filing_documents(cik, accession)
+    primary = next((d for d in docs if d["type"].upper() == form.upper()), None)
+    if not primary:
+        primary = next(
+            (
+                d for d in docs
+                if d["name"].lower().endswith((".htm", ".html"))
+                and not re.search(r"ex\d|_ex\b|exhibit", d["name"], re.IGNORECASE)
+            ),
+            None,
+        )
+    if not primary:
+        return None
+    cik_no_padding = str(int(cik))
+    accession_no_dashes = accession.replace("-", "")
+    return (
+        f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/"
+        f"{accession_no_dashes}/{primary['name']}"
+    )
+
 
 def _list_capital_raise_filings(cik, lookback_days=365):
     """대상 CIK의 최근 lookback_days 안 S-1/S-3/424B* 공시 목록을 _list_13d_13g_filings와
@@ -626,9 +697,28 @@ def find_capital_raise_filings(ticker, lookback_days=365):
         filings = _list_capital_raise_filings(cik, lookback_days)
     except Exception:
         return []
+    if not filings:
+        return []
+
+    def _detail_for(f):
+        """공시 본문을 받아 실제 공모 조건을 뽑는다. 본문을 못 받거나 조건을 못 찾으면
+        None — find_capital_raise_filings 전체가 실패하진 않고 그 건만 폼타입까지만
+        표시된다(13D/13G에서 보고자 이름을 못 찾은 건을 건너뛰는 것과 같은 fail-safe)."""
+        doc_url = _primary_capital_raise_doc_url(cik, f["accession"], f["form"] or "")
+        if not doc_url:
+            return None
+        try:
+            r = requests.get(doc_url, headers={"User-Agent": _USER_AGENT}, timeout=15)
+            return _extract_offering_detail(r.text)
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(filings))) as executor:
+        details = list(executor.map(_detail_for, filings))
+
     cik_no_padding = str(int(cik))
     results = []
-    for f in filings:
+    for f, detail in zip(filings, details):
         form = f["form"] or "?"
         accession_no_dashes = f["accession"].replace("-", "")
         url = (
@@ -636,8 +726,11 @@ def find_capital_raise_filings(ticker, lookback_days=365):
             f"{accession_no_dashes}/{f['accession']}-index.htm"
         )
         label = _CAPITAL_RAISE_FORM_LABELS.get(form, form)
+        headline = f"{form} 공시 — {label}"
+        if detail:
+            headline += f" ({detail})"
         results.append({
-            "headline": f"{form} 공시 — {label}",
+            "headline": headline,
             "source": "SEC EDGAR",
             "datetime": _file_date_to_epoch(f["date"]) if f.get("date") else None,
             "url": url,
