@@ -784,23 +784,72 @@ _NEGATION_GUARD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 제3자 관계 가드 (2026-07-30, 실측: NVDA↔AMD가 "전략적 제휴"로 잘못 승격됨) — AMD 10-Q의
+# Risk Factors에서 실제 텍스트를 확인해보니 "Similarly, Nvidia ... leverages its market
+# position ... For example, in September 2025, Nvidia announced a partnership and
+# investment in Intel"이었다. 검색어(허브 이름 "NVIDIA")와 거래 키워드("partnership")는
+# 둘 다 문장에 있어 기존 로직은 승격시켰지만, 실제 그 거래의 당사자는 Nvidia와 Intel이지
+# AMD(문맥을 검색한 대상 회사)가 아니다 — AMD는 그저 "경쟁사끼리 제휴가 늘고 있다"는
+# 문맥에서 예시로 언급됐을 뿐이다.
+#
+# 이런 문장은 검색 대상 회사 자신이 그 거래의 당사자로 등장하지 않는다는 공통점이 있다 —
+# reverse 검색(상대 회사 자신의 공시에서 허브 이름을 찾음)이면 그 공시 주인(상대 회사)이,
+# forward 검색(허브 자신의 공시에서 상대 이름을 찾음)이면 허브 자신이 "we/our/the Company"
+# 같은 자기지칭이나 자기 회사명으로 그 문장에 등장해야 한다. 둘 다 없으면 "누구 얘기인지도
+# 모르는 채 거래 키워드만 보고" 승격시키는 셈이라 보수적으로 승격을 거부한다(과확신보다
+# 보수적 판단 우선 원칙, 이 함수 docstring 참고).
+_SELF_REFERENCE_PRONOUNS_RE = re.compile(r"\b(?:we|our|us|the Company)\b", re.IGNORECASE)
 
-def promote_mentions_with_context(filing_edges):
+# 실측(AMAT 10-K) 재현: 위 가드를 처음 넣고 보니 진짜 관계까지 같이 걸러졌다 —
+#   - "Received a 2026 Intel EPIC Supplier Award" (Applied's EPIC Center 문단 안) — 회사가
+#     자기 자신을 정식명("Applied Materials") 대신 축약형("Applied")으로 부름.
+#   - "Applied and Micron Technology are working to develop next-generation DRAM..." — 역시
+#     "Applied"만 등장.
+#   - "Percentage of Net Revenue Taiwan Semiconductor Manufacturing Company Limited 18%" —
+#     재무제표 매출 비중표는 애초에 문장 형태가 아니라 주어(자기지칭)가 없다. 하지만 이
+#     표는 정의상 항상 "이 공시를 낸 회사 자신의" 매출 비중이라 굳이 자기지칭이 없어도
+#     안전하게 자기 관계로 인정할 수 있다.
+# 그래서 두 가지를 보강한다: (1) 매출 비중표 패턴은 자기지칭 없이도 통과, (2) 회사명 첫
+# 단어(대문자 그대로, 5자 이상)도 자기지칭으로 인정 — "as applied research"처럼 소문자로
+# 쓰인 일반 단어 오탐은 대소문자 구분(대문자 시작만 매칭)으로 줄인다.
+_REVENUE_CONCENTRATION_TABLE_RE = re.compile(r"percentage\s+of\s+(?:net\s+)?revenue", re.IGNORECASE)
+
+
+def _self_reference_present(context, self_name):
+    """context 안에 자기지칭 대명사·회사명(정식/축약형)·매출 비중표 패턴이 등장하는지."""
+    if _SELF_REFERENCE_PRONOUNS_RE.search(context) or _REVENUE_CONCENTRATION_TABLE_RE.search(context):
+        return True
+    for phrase in _filing_search_candidates(self_name):
+        if phrase and re.search(r"\b" + re.escape(phrase) + r"\b", context, re.IGNORECASE):
+            return True
+    first_word = (self_name or "").split()[0].rstrip(",") if self_name else ""
+    if len(first_word) >= 5 and re.search(r"\b" + re.escape(first_word) + r"\b", context):
+        return True
+    return False
+
+
+def promote_mentions_with_context(filing_edges, hub_name):
     """attach_context_snippets() 이후에 호출한다. "공시 내 언급" 엣지 중 실제 문맥을
     확보한 것만 검사해, 거래 관련 키워드가 있으면 구체적 관계 유형(등급 B)으로 승격하고,
-    문맥이 없거나(상위 N개 밖) 노이즈 키워드·부정 가드가 함께 있으면 그대로 둔다(과확신보다
-    보수적 판단을 우선). 승격된 건은 전부 infer_relationship_direction()으로 방향도
-    시도한다 — "전략적 제휴"라고 분류돼도 실제 문맥은 "OO에 제품을 대규모 공급"처럼 방향이
-    뚜렷한 경우가 흔하다(실측: NVDA-Meta 8-K, 문구는 "strategic partnership"이지만 내용은
-    "large-scale deployment of NVIDIA ... GPUs"). 공급자/고객 언어가 뚜렷하지 않으면
+    문맥이 없거나(상위 N개 밖) 노이즈 키워드·부정 가드·제3자 가드가 함께 있으면 그대로
+    둔다(과확신보다 보수적 판단을 우선). 승격된 건은 전부 infer_relationship_direction()으로
+    방향도 시도한다 — "전략적 제휴"라고 분류돼도 실제 문맥은 "OO에 제품을 대규모 공급"처럼
+    방향이 뚜렷한 경우가 흔하다(실측: NVDA-Meta 8-K, 문구는 "strategic partnership"이지만
+    내용은 "large-scale deployment of NVIDIA ... GPUs"). 공급자/고객 언어가 뚜렷하지 않으면
     infer_relationship_direction()이 알아서 "unknown"을 반환하므로, 유형별로 시도 여부를
     가르지 않고 전부 통과시켜도 안전하다. filing_edges를 그 자리에서 수정하고 그대로
-    반환한다."""
+    반환한다.
+
+    hub_name: 이 관계도의 허브 기업명 — forward 검색(허브 자신의 공시)일 때 제3자 가드의
+    자기지칭 대상이 된다(reverse는 엣지 자신의 counterparty_name을 쓴다)."""
     for e in filing_edges:
         if e["relationship_type"] != "공시 내 언급":
             continue
         context = e.get("context")
         if not context or _NOISE_KEYWORDS_RE.search(context) or _NEGATION_GUARD_RE.search(context):
+            continue
+        self_name = hub_name if e.get("search_direction") == "forward" else e.get("counterparty_name")
+        if not _self_reference_present(context, self_name):
             continue
         promoted_type = next(
             (name for name, pattern in _PROMOTION_TYPE_KEYWORDS.items() if pattern.search(context)),

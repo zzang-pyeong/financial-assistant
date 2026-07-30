@@ -450,10 +450,12 @@ _COUNTERPARTY_NEWS_LOOKBACK_DAYS = 180
 # 제3의 회사와 무관한 다른 회사 뉴스 피드에 잡히는 경우) — 링크를 그대로 노출해 사용자가
 # 직접 확인하게 하는 이유가 여기에 있다.
 _MARKET_ROUNDUP_RE = re.compile(
-    r"\bstocks?\b.{0,20}\b(slide|rally|surge|drop|gain|climb|fall|extend)|"
+    r"\bstocks?\b.{0,20}\b(slide|rally|surge|drop|gain|climb|fall|extend|tumble|plunge|"
+    r"slump|sink|tank|rout)|"
     r"\bmarket\s+(midday|today|update|wrap|close|open)\b|"
     r"\b\d+\s+(stocks?|companies)\s+to\s+(buy|watch|sell)\b|"
     r"\bstocks?\s+to\s+(buy|watch|sell)\b|"
+    r"\bsell[- ]?off\b|"
     r"\b(dow|nasdaq|s&p)\b",
     re.IGNORECASE,
 )
@@ -463,6 +465,18 @@ _MULTI_TICKER_LIST_RE = re.compile(r"\b[A-Z]{2,5}\b(?:\s*,\s*[A-Z]{2,5}\b){2,}")
 
 def _looks_like_market_roundup(headline):
     return bool(_MARKET_ROUNDUP_RE.search(headline) or _MULTI_TICKER_LIST_RE.search(headline))
+
+
+def _mentions_hub(text, hub_tokens, hub_ticker_upper):
+    if not text:
+        return False
+    ticker_hit = len(hub_ticker_upper) >= 3 and re.search(
+        r"\b" + re.escape(hub_ticker_upper) + r"\b", text,
+    )
+    name_hit = hub_tokens and all(
+        re.search(r"\b" + re.escape(tok) + r"\b", text, re.IGNORECASE) for tok in hub_tokens
+    )
+    return bool(ticker_hit or name_hit)
 
 
 def find_counterparty_context_news(hub_name, hub_ticker, counterparty_ticker):
@@ -496,15 +510,18 @@ def find_counterparty_context_news(hub_name, hub_ticker, counterparty_ticker):
         raw_headline = n.get("headline") or ""
         if not raw_headline or _looks_like_market_roundup(raw_headline):
             continue
-        ticker_hit = len(hub_ticker_upper) >= 3 and re.search(
-            r"\b" + re.escape(hub_ticker_upper) + r"\b", raw_headline,
-        )
-        name_hit = hub_tokens and all(
-            re.search(r"\b" + re.escape(tok) + r"\b", raw_headline, re.IGNORECASE)
-            for tok in hub_tokens
-        )
-        if ticker_hit or name_hit:
-            candidates.append(n)
+        if not _mentions_hub(raw_headline, hub_tokens, hub_ticker_upper):
+            continue
+        # 화면에는 헤드라인이 아니라 summary가 우선 표시된다(pages/8_관계도.py의
+        # _best_description). summary가 있는데 시황 요약형이거나 허브를 언급조차 안
+        # 하면, 검증은 헤드라인으로 통과했어도 실제로 사용자에게 뜨는 텍스트는 검증 안 된
+        # 채로 "[상대사 보도]"라는 신뢰 배지만 달고 나가는 셈이다(실측: NVDA 관계도의 AMD
+        # 행에 헤드라인과 무관한 시황 요약 summary가 그대로 노출된 문제).
+        summary = n.get("summary") or ""
+        if summary and (_looks_like_market_roundup(summary)
+                         or not _mentions_hub(summary, hub_tokens, hub_ticker_upper)):
+            continue
+        candidates.append(n)
     if not candidates:
         return None
     return max(candidates, key=lambda n: n.get("datetime") or 0)

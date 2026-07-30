@@ -90,7 +90,7 @@ if st.session_state.get("filing_edges_ticker") != ticker:
     # 문맥에 거래 관련 키워드가 있으면 "공시 내 언급"(기본 숨김)에서 구체적 관계 유형으로
     # 승격 — CoreWeave/IREN처럼 실제 공급·고객 관계로 보이는 회사가 단순 언급으로만
     # 잡혀 기본 화면에서 안 보이던 문제(사용자 피드백)를 해결한다.
-    filing_edges = promote_mentions_with_context(filing_edges)
+    filing_edges = promote_mentions_with_context(filing_edges, hub_name)
     progress.empty()
     st.session_state.update(filing_edges=filing_edges, filing_edges_ticker=ticker)
 
