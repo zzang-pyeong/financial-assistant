@@ -1,14 +1,19 @@
-streamlit
-packaging
-finance-datareader
-yfinance
-requests
-python-dotenv
-pandas
-python-dateutil
-numpy
-deep-translator
-plotly
+# 2026-07-31 버전 고정 — 이전엔 전부 무고정이라 배포마다 그 시점 최신 버전을 새로 받아서
+# 로컬(오래된 캐시 버전)과 배포판(항상 최신)이 서로 다른 버전으로 돌아가는 문제가 있었다
+# (실측: yfinance가 로컬은 0.2.66, 배포판은 1.5.2로 갈라져 있었음 — 회사 프로필(.info) 필드가
+# 배포판에서만 N/A로 뜨는 버그의 원인 중 하나였다). 아래 버전은 배포 로그에서 확인한, 현재
+# 정상 동작 중인 조합을 그대로 고정한 것 — 올릴 땐 로컬에서 먼저 검증 후 의도적으로 갱신한다.
+streamlit==1.60.0
+packaging==26.2
+finance-datareader==0.9.202
+yfinance==1.5.2
+requests==2.34.2
+python-dotenv==1.2.2
+pandas==3.0.5
+python-dateutil==2.9.0.post0
+numpy==2.4.6
+deep-translator==1.11.4
+plotly==6.9.0
 # streamlit이 이미 의존하고 있지만, 관계도 로고 원형 크롭(lib/logos.py)에서 직접 쓰므로
 # 간접 의존에 기대지 않고 명시한다
-pillow
+pillow==12.3.0
