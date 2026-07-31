@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import requests
 import streamlit as st
 import FinanceDataReader as fdr
@@ -57,10 +58,20 @@ def get_intraday_price_history(ticker, interval, period):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_yf_info(ticker):
-    try:
-        return yf.Ticker(ticker).info
-    except Exception:
-        return {}
+    """yfinance의 .info는 Yahoo Finance가 클라우드 호스팅 IP(Streamlit Cloud 등)를 간헐적으로
+    차단·제한해서 가끔 빈 dict를 돌려준다(실측: 로컬에서는 배포판과 동일한 yfinance 버전으로도
+    정상 동작 확인 — IP 쪽 문제로 추정). 완전히 막을 순 없지만, 그 차단이 매 요청마다 발생하는
+    게 아니라 간헐적이라 짧은 재시도로 상당수는 복구된다."""
+    for attempt in range(3):
+        try:
+            info = yf.Ticker(ticker).info
+            if info:
+                return info
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(1.5)
+    return {}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
